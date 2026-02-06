@@ -41,14 +41,8 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   ban_threshold: 10           # Violations before auto-ban
   ban_duration: 3600          # Ban duration in seconds (1 hour)
 
-  # Storage mode: 'cache' (default, no DB queries) or 'database' (persistent)
-  # 'cache' - Uses PSR-16 cache only (Redis/APCu/file), bans expire with cache
-  # 'database' - Also persists bans/logs to DB (survives cache clear, but more overhead)
-  storage_mode: 'cache'
-
   # Logging
   log_blocked_requests: true  # Log to error_log (fail2ban compatible)
-  log_to_database: false      # Store in BlockedRequest table (requires storage_mode: database)
 
   # Whitelisted IPs (monitoring services, internal IPs)
   # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated)
@@ -75,6 +69,26 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
     - '/gobuster/i'
     - '/dirbuster/i'
     - '/wpscan/i'
+
+# Storage configuration
+# Determines where bans and blocked request logs are stored
+Restruct\SilverStripe\Waf\Services\WafStorageService:
+  # Storage mode:
+  # - 'cache': Pure cache, fastest, data volatile (good under attack)
+  # - 'file': Cache + JSON files in silverstripe-cache/ (admin viewable, no DB)
+  # - 'database': Cache + DB (full persistence, highest overhead)
+  storage_mode: 'file'
+
+  # File paths (relative to BASE_PATH or absolute)
+  blocked_log_file: 'silverstripe-cache/waf_blocked.jsonl'
+  bans_file: 'silverstripe-cache/waf_bans.json'
+
+  # Max entries in blocked log (auto-rotates)
+  max_log_entries: 1000
+
+  # Under high load, skip file/DB persistence (violations/minute threshold)
+  # Set to 0 to disable high-load detection
+  high_load_threshold: 100
 
 # IP Blocklist sync configuration
 Restruct\SilverStripe\Waf\Services\IpBlocklistService:

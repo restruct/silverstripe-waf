@@ -62,6 +62,9 @@ class IpBlocklistService
 
     /**
      * Get the combined blocklist (from cache or sync)
+     *
+     * Uses chunked storage to handle large blocklists within Memcached limits.
+     * Metadata is stored in one key, CIDR chunks in separate keys.
      */
     public function getBlocklist(): array
     {
@@ -70,25 +73,46 @@ class IpBlocklistService
         }
 
         $cache = $this->getCache();
-        $cacheKey = 'blocklist_combined';
 
-        // Try cache first
-        $cached = $cache->get($cacheKey);
-        if ($cached !== null) {
-            $this->loadedBlocklist = $cached;
-            return $cached;
+        // Load metadata
+        $meta = $cache->get('blocklist_meta');
+        if ($meta === null) {
+            // Need to sync
+            $blocklist = $this->syncBlocklists();
+            $this->loadedBlocklist = $blocklist;
+            return $blocklist;
         }
 
-        // Sync and cache
-        $blocklist = $this->syncBlocklists();
-        $cache->set($cacheKey, $blocklist, $this->config()->get('cache_duration'));
+        // Load IPs (stored as associative array for fast lookup)
+        $ips = $cache->get('blocklist_ips') ?: [];
 
-        $this->loadedBlocklist = $blocklist;
-        return $blocklist;
+        // Load CIDR chunks
+        $cidrs = [];
+        $chunkCount = $meta['cidr_chunks'] ?? 0;
+        for ($i = 0; $i < $chunkCount; $i++) {
+            $chunk = $cache->get("blocklist_cidrs_{$i}");
+            if ($chunk) {
+                $cidrs = array_merge($cidrs, $chunk);
+            }
+        }
+
+        $this->loadedBlocklist = [
+            'ips' => $ips,
+            'cidrs' => $cidrs,
+            'synced_at' => $meta['synced_at'] ?? null,
+            'sources' => $meta['sources'] ?? [],
+        ];
+
+        return $this->loadedBlocklist;
     }
 
     /**
      * Force sync all blocklists
+     *
+     * Stores data in chunks to work within Memcached size limits:
+     * - blocklist_meta: Metadata and stats
+     * - blocklist_ips: IP lookup table (usually small enough for one key)
+     * - blocklist_cidrs_N: CIDR ranges in chunks of 500
      */
     public function syncBlocklists(): array
     {
@@ -141,9 +165,40 @@ class IpBlocklistService
         $combined['ips'] = array_fill_keys($combined['ips'], true);
 
         // Remove duplicate CIDRs
-        $combined['cidrs'] = array_unique($combined['cidrs']);
+        $combined['cidrs'] = array_unique(array_values($combined['cidrs']));
+
+        // Store in cache with chunking for large data
+        $this->storeBlocklistInCache($combined);
 
         return $combined;
+    }
+
+    /**
+     * Store blocklist in cache with chunking for Memcached compatibility
+     */
+    protected function storeBlocklistInCache(array $blocklist): void
+    {
+        $cache = $this->getCache();
+        $ttl = $this->config()->get('cache_duration');
+
+        // Store IPs (usually fits in one key, but could be chunked if needed)
+        $cache->set('blocklist_ips', $blocklist['ips'], $ttl);
+
+        // Chunk CIDRs (500 per chunk ~= 20-50KB, well under 1MB limit)
+        $cidrChunks = array_chunk($blocklist['cidrs'], 500);
+        foreach ($cidrChunks as $i => $chunk) {
+            $cache->set("blocklist_cidrs_{$i}", $chunk, $ttl);
+        }
+
+        // Store metadata
+        $meta = [
+            'synced_at' => $blocklist['synced_at'],
+            'sources' => $blocklist['sources'],
+            'total_ips' => count($blocklist['ips']),
+            'total_cidrs' => count($blocklist['cidrs']),
+            'cidr_chunks' => count($cidrChunks),
+        ];
+        $cache->set('blocklist_meta', $meta, $ttl);
     }
 
     /**
@@ -280,6 +335,20 @@ class IpBlocklistService
      */
     public function getStats(): array
     {
+        $cache = $this->getCache();
+
+        // Try to get stats from metadata (fast, no full load)
+        $meta = $cache->get('blocklist_meta');
+        if ($meta) {
+            return [
+                'total_ips' => $meta['total_ips'] ?? 0,
+                'total_cidrs' => $meta['total_cidrs'] ?? 0,
+                'synced_at' => $meta['synced_at'] ?? null,
+                'sources' => $meta['sources'] ?? [],
+            ];
+        }
+
+        // Fallback to full load
         $blocklist = $this->getBlocklist();
 
         return [
@@ -296,7 +365,19 @@ class IpBlocklistService
     public function clearCache(): void
     {
         $cache = $this->getCache();
-        $cache->delete('blocklist_combined');
+
+        // Clear metadata
+        $meta = $cache->get('blocklist_meta');
+        $cache->delete('blocklist_meta');
+        $cache->delete('blocklist_ips');
+
+        // Clear all CIDR chunks
+        if ($meta && isset($meta['cidr_chunks'])) {
+            for ($i = 0; $i < $meta['cidr_chunks']; $i++) {
+                $cache->delete("blocklist_cidrs_{$i}");
+            }
+        }
+
         $this->loadedBlocklist = null;
     }
 

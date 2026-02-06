@@ -3,9 +3,8 @@
 namespace Restruct\SilverStripe\Waf\Middleware;
 
 use Psr\SimpleCache\CacheInterface;
-use Restruct\SilverStripe\Waf\Models\BannedIp;
-use Restruct\SilverStripe\Waf\Models\BlockedRequest;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
+use Restruct\SilverStripe\Waf\Services\WafStorageService;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\Middleware\HTTPMiddleware;
@@ -52,10 +51,6 @@ class WafMiddleware implements HTTPMiddleware
 
     // Logging
     private static bool $log_blocked_requests = true;
-    private static bool $log_to_database = false;  // Disabled by default to minimize DB queries
-
-    // Storage mode: 'cache' (fast, no DB) or 'database' (persistent, more overhead)
-    private static string $storage_mode = 'cache';
 
     // Whitelists
     private static array $whitelisted_ips = [];
@@ -146,32 +141,7 @@ class WafMiddleware implements HTTPMiddleware
 
     protected function isBanned(string $ip): bool
     {
-        $cache = $this->getCache();
-        $cacheKey = 'banned_' . md5($ip);
-
-        // Check cache first (fast) - this is the primary check
-        if ($cache->has($cacheKey)) {
-            return true;
-        }
-
-        // Only check database if storage_mode is 'database'
-        if ($this->config()->get('storage_mode') === 'database') {
-            $ban = BannedIp::get()->filter([
-                'IpAddress' => $ip,
-                'ExpiresAt:GreaterThan' => date('Y-m-d H:i:s'),
-            ])->first();
-
-            if ($ban) {
-                // Cache the result for faster subsequent checks
-                $ttl = strtotime($ban->ExpiresAt) - time();
-                if ($ttl > 0) {
-                    $cache->set($cacheKey, true, $ttl);
-                }
-                return true;
-            }
-        }
-
-        return false;
+        return $this->getStorageService()->isBanned($ip);
     }
 
     protected function isBlocklistedIp(string $ip): bool
@@ -296,6 +266,9 @@ class WafMiddleware implements HTTPMiddleware
 
     protected function recordViolation(string $ip, string $reason): void
     {
+        // Record for high-load detection
+        $this->getStorageService()->recordViolation();
+
         if (!$this->config()->get('auto_ban_enabled')) {
             return;
         }
@@ -327,25 +300,9 @@ class WafMiddleware implements HTTPMiddleware
 
     protected function banIp(string $ip, int $duration, string $reason): void
     {
-        // Always cache ban (primary storage, fast)
-        $cache = $this->getCache();
-        $cacheKey = 'banned_' . md5($ip);
-        $cache->set($cacheKey, true, $duration);
+        $this->getStorageService()->banIp($ip, $duration, $reason);
 
-        // Only store in database if storage_mode is 'database'
-        if ($this->config()->get('storage_mode') === 'database') {
-            try {
-                $ban = BannedIp::create();
-                $ban->IpAddress = $ip;
-                $ban->Reason = $reason;
-                $ban->ExpiresAt = date('Y-m-d H:i:s', time() + $duration);
-                $ban->write();
-            } catch (\Exception $e) {
-                // Don't fail on DB error
-            }
-        }
-
-        // Log
+        // Log for fail2ban
         error_log(sprintf(
             '[WAF] BANNED ip=%s duration=%d reason="%s"',
             $ip,
@@ -398,20 +355,8 @@ class WafMiddleware implements HTTPMiddleware
             ));
         }
 
-        // Log to database
-        if ($this->config()->get('log_to_database')) {
-            try {
-                $log = BlockedRequest::create();
-                $log->IpAddress = $ip;
-                $log->Uri = substr($uri, 0, 255);
-                $log->UserAgent = substr($userAgent, 0, 255);
-                $log->Reason = $reason;
-                $log->Detail = substr($detail, 0, 255);
-                $log->write();
-            } catch (\Exception $e) {
-                // Don't fail request on logging error
-            }
-        }
+        // Log to storage (file or database depending on mode)
+        $this->getStorageService()->logBlockedRequest($ip, $uri, $userAgent, $reason, $detail);
     }
 
     // ========================================================================
@@ -421,5 +366,10 @@ class WafMiddleware implements HTTPMiddleware
     protected function getCache(): CacheInterface
     {
         return Injector::inst()->get(CacheInterface::class . '.Waf');
+    }
+
+    protected function getStorageService(): WafStorageService
+    {
+        return Injector::inst()->get(WafStorageService::class);
     }
 }

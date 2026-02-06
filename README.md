@@ -86,12 +86,33 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
 
 ### Storage Modes
 
-| Mode | DB Queries | Persistence | Use Case |
-|------|------------|-------------|----------|
-| `cache` (default) | **None** | Until cache expires | High-traffic sites, Redis/APCu available |
-| `database` | On ban check miss | Permanent | Need CMS admin, audit logs |
+The module supports three storage modes, configurable via `WafStorageService.storage_mode`:
 
-For best performance, use `cache` mode with Redis or APCu:
+| Mode | DB Queries | Persistence | CMS Admin | Use Case |
+|------|------------|-------------|-----------|----------|
+| `cache` | **None** | Until cache expires | Limited | Under attack, max performance |
+| `file` (default) | **None** | JSON files | Full | Normal operation, no DB overhead |
+| `database` | Some | Full DB | Full | Audit requirements, large teams |
+
+```yaml
+Restruct\SilverStripe\Waf\Services\WafStorageService:
+  storage_mode: 'file'                    # 'cache', 'file', or 'database'
+  blocked_log_file: 'silverstripe-cache/waf_blocked.jsonl'
+  bans_file: 'silverstripe-cache/waf_bans.json'
+  max_log_entries: 1000
+  high_load_threshold: 100                # Auto-switch to cache under attack
+```
+
+**High-load auto-fallback:** When violations per minute exceed `high_load_threshold`, the module automatically skips file/DB persistence and operates in pure cache mode. This prevents disk I/O from becoming a bottleneck during attacks.
+
+### IP Blocklist Chunking (Memcached Compatible)
+
+The blocklist sync handles large IP lists (600K+ IPs) by chunking data:
+- Metadata in one key
+- CIDRs split into 500-entry chunks (~20KB each)
+- Works within Memcached's 1MB item limit
+
+For best performance, use `file` mode with Memcached/Redis:
 
 ### Environment Variables
 
