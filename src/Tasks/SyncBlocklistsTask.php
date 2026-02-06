@@ -2,26 +2,29 @@
 
 namespace Restruct\SilverStripe\Waf\Tasks;
 
-use Restruct\SilverStripe\Waf\Models\BannedIp;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
+use Restruct\SilverStripe\Waf\Services\WafStorageService;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Dev\BuildTask;
 
 /**
- * Task to sync IP blocklists from threat intelligence feeds
+ * Sync IP blocklists from threat intelligence feeds
  *
- * Run via:
+ * Run manually:
  *   vendor/bin/sake dev/tasks/waf-sync-blocklists
  *
- * Schedule via cron (recommended: every 6 hours):
+ * Schedule via cron (recommended every 6 hours):
  *   0 */6 * * * cd /path/to/site && vendor/bin/sake dev/tasks/waf-sync-blocklists
+ *
+ * Or use the SyncBlocklistsJob for QueuedJobs module integration.
  */
 class SyncBlocklistsTask extends BuildTask
 {
     private static string $segment = 'waf-sync-blocklists';
 
     protected $title = 'WAF: Sync IP Blocklists';
-    protected $description = 'Sync IP blocklists from threat intelligence feeds (FireHOL, Binary Defense, etc.)';
+
+    protected $description = 'Download and cache IP blocklists from threat intelligence feeds (FireHOL, Binary Defense, etc.)';
 
     public function run($request): void
     {
@@ -35,20 +38,18 @@ class SyncBlocklistsTask extends BuildTask
 
         // Sync blocklists
         $startTime = microtime(true);
-        $blocklist = $service->syncBlocklists();
+        $result = $service->syncBlocklists();
         $duration = round(microtime(true) - $startTime, 2);
 
         // Output results
         $this->output("\nSync completed in {$duration}s\n");
         $this->output("=====================================\n");
-
-        $totalIps = count($blocklist['ips'] ?? []);
-        $totalCidrs = count($blocklist['cidrs'] ?? []);
-        $this->output("Total IPs: {$totalIps}\n");
-        $this->output("Total CIDRs: {$totalCidrs}\n");
+        $this->output("Total IPs: " . count($result['ips']) . "\n");
+        $this->output("Total CIDRs: " . count($result['cidrs']) . "\n");
+        $this->output("Optimized ranges: " . count($result['ranges']) . " (merged for binary search)\n");
         $this->output("\nSources:\n");
 
-        foreach ($blocklist['sources'] ?? [] as $name => $source) {
+        foreach ($result['sources'] as $name => $source) {
             if (isset($source['error'])) {
                 $this->output("  - {$name}: ERROR - {$source['error']}\n");
             } else {
@@ -57,12 +58,12 @@ class SyncBlocklistsTask extends BuildTask
             }
         }
 
-        // Also clean up expired bans
+        // Clean up expired bans
         $this->output("\nCleaning up expired bans...\n");
-        $expiredCount = BannedIp::cleanupExpired();
-        $this->output("Removed {$expiredCount} expired bans\n");
-
-        $this->output("\nDone.\n");
+        /** @var WafStorageService $storage */
+        $storage = Injector::inst()->get(WafStorageService::class);
+        $storage->cleanupExpiredBans();
+        $this->output("Done.\n");
     }
 
     protected function output(string $message): void

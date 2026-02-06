@@ -17,11 +17,22 @@ use SilverStripe\Core\Injector\Injector;
  * WAF Middleware - runs within Silverstripe framework
  *
  * Features:
- * - Rate limiting per IP
+ * - Rate limiting per IP (with soft progressive delays)
  * - IP blocklist checking (threat intelligence feeds)
  * - User-agent filtering
  * - Auto-banning after violations
- * - Database logging of blocked requests
+ * - Configurable logging (file/cache/database)
+ *
+ * Check order (optimized for performance):
+ * 1. Whitelist (O(1) - skip all checks for trusted IPs)
+ * 2. Ban check (O(1) cache lookup)
+ * 3. Blocklist (O(1) with per-IP result caching, O(log n) first lookup)
+ * 4. User-agent (fast regex)
+ * 5. Rate limit (O(1) cache increment)
+ *
+ * The blocklist check uses per-IP result caching (60s default) so repeat
+ * visitors skip the full lookup. This keeps known bad IPs blocked immediately
+ * while minimizing latency for legitimate traffic.
  */
 class WafMiddleware implements HTTPMiddleware
 {
@@ -136,7 +147,37 @@ class WafMiddleware implements HTTPMiddleware
             $whitelist = array_merge($whitelist, array_map('trim', explode(',', $envWhitelist)));
         }
 
-        return in_array($ip, $whitelist, true);
+        foreach ($whitelist as $entry) {
+            // Exact match
+            if ($entry === $ip) {
+                return true;
+            }
+            // CIDR match (e.g., "10.0.0.0/8")
+            if (str_contains($entry, '/') && $this->ipMatchesCidr($ip, $entry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if IP matches a CIDR range (for whitelist)
+     */
+    protected function ipMatchesCidr(string $ip, string $cidr): bool
+    {
+        [$subnet, $bits] = explode('/', $cidr);
+        $bits = (int) $bits;
+
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
+            && filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $ipLong = ip2long($ip);
+            $subnetLong = ip2long($subnet);
+            $mask = -1 << (32 - $bits);
+            return ($ipLong & $mask) === ($subnetLong & $mask);
+        }
+
+        return false;
     }
 
     protected function isBanned(string $ip): bool

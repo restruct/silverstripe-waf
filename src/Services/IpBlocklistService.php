@@ -16,7 +16,10 @@ use SilverStripe\Core\Injector\Injector;
  * - Spamhaus DROP
  * - Local custom blocklist
  *
- * Uses CIDR matching for efficient IP range checking.
+ * Performance optimizations:
+ * - Direct IP lookup via hash table: O(1)
+ * - CIDR ranges converted to sorted IP ranges for binary search: O(log n)
+ * - Per-IP result caching to skip repeated lookups for same visitor
  */
 class IpBlocklistService
 {
@@ -28,10 +31,21 @@ class IpBlocklistService
     private static array $blocklist_sources = [];
     private static ?string $local_blocklist_file = null;
 
+    /**
+     * How long to cache per-IP "is blocked" results (seconds)
+     * Reduces repeated CIDR lookups for the same visitor
+     */
+    private static int $ip_result_cache_duration = 60;
+
     protected ?array $loadedBlocklist = null;
 
     /**
      * Check if an IP is on any blocklist
+     *
+     * Uses multi-tier caching:
+     * 1. Per-IP result cache (fastest - skips all lookups)
+     * 2. Direct IP hash lookup (fast)
+     * 3. Binary search through sorted IP ranges (O(log n) vs O(n))
      */
     public function isBlocked(string $ip): bool
     {
@@ -39,21 +53,96 @@ class IpBlocklistService
             return false;
         }
 
+        // Optimization 1: Check per-IP result cache first
+        $cache = $this->getCache();
+        $resultKey = 'ip_blocked_' . md5($ip);
+        $cachedResult = $cache->get($resultKey);
+
+        if ($cachedResult !== null) {
+            return $cachedResult === 'yes';
+        }
+
+        // Perform the actual lookup
+        $isBlocked = $this->performBlocklistCheck($ip);
+
+        // Cache the result for this IP
+        $cache->set(
+            $resultKey,
+            $isBlocked ? 'yes' : 'no',
+            $this->config()->get('ip_result_cache_duration')
+        );
+
+        return $isBlocked;
+    }
+
+    /**
+     * Perform the actual blocklist check (without result caching)
+     */
+    protected function performBlocklistCheck(string $ip): bool
+    {
         $blocklist = $this->getBlocklist();
 
         if (empty($blocklist)) {
             return false;
         }
 
-        // Check direct IP match first (fast)
+        // Check direct IP match first (O(1) hash lookup)
         if (isset($blocklist['ips'][$ip])) {
             return true;
         }
 
-        // Check CIDR ranges
+        // Check IP ranges using binary search (O(log n))
+        if (!empty($blocklist['ranges'])) {
+            return $this->ipInRanges($ip, $blocklist['ranges']);
+        }
+
+        // Fallback: linear CIDR check (for backwards compatibility)
         foreach ($blocklist['cidrs'] ?? [] as $cidr) {
             if ($this->ipInCidr($ip, $cidr)) {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Binary search through sorted IP ranges
+     *
+     * Ranges are stored as [start_long, end_long] pairs, sorted by start.
+     * This reduces O(n) linear scan to O(log n) binary search.
+     */
+    protected function ipInRanges(string $ip, array $ranges): bool
+    {
+        // Only IPv4 supported for range search (IPv6 would need different handling)
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return false;
+        }
+
+        $ipLong = ip2long($ip);
+        if ($ipLong === false) {
+            return false;
+        }
+
+        // Convert to unsigned for proper comparison
+        $ipLong = sprintf('%u', $ipLong);
+
+        // Binary search: find the last range where start <= ip
+        $left = 0;
+        $right = count($ranges) - 1;
+
+        while ($left <= $right) {
+            $mid = (int) (($left + $right) / 2);
+            $range = $ranges[$mid];
+
+            if ($ipLong >= $range[0] && $ipLong <= $range[1]) {
+                return true; // IP is within this range
+            }
+
+            if ($ipLong < $range[0]) {
+                $right = $mid - 1;
+            } else {
+                $left = $mid + 1;
             }
         }
 
@@ -86,7 +175,10 @@ class IpBlocklistService
         // Load IPs (stored as associative array for fast lookup)
         $ips = $cache->get('blocklist_ips') ?: [];
 
-        // Load CIDR chunks
+        // Load IP ranges (optimized binary-searchable format)
+        $ranges = $cache->get('blocklist_ranges') ?: [];
+
+        // Load CIDR chunks (fallback for IPv6 or if ranges failed)
         $cidrs = [];
         $chunkCount = $meta['cidr_chunks'] ?? 0;
         for ($i = 0; $i < $chunkCount; $i++) {
@@ -99,6 +191,7 @@ class IpBlocklistService
         $this->loadedBlocklist = [
             'ips' => $ips,
             'cidrs' => $cidrs,
+            'ranges' => $ranges,
             'synced_at' => $meta['synced_at'] ?? null,
             'sources' => $meta['sources'] ?? [],
         ];
@@ -112,13 +205,15 @@ class IpBlocklistService
      * Stores data in chunks to work within Memcached size limits:
      * - blocklist_meta: Metadata and stats
      * - blocklist_ips: IP lookup table (usually small enough for one key)
-     * - blocklist_cidrs_N: CIDR ranges in chunks of 500
+     * - blocklist_ranges: Sorted IP ranges for binary search
+     * - blocklist_cidrs_N: CIDR ranges in chunks of 500 (fallback)
      */
     public function syncBlocklists(): array
     {
         $combined = [
             'ips' => [],
             'cidrs' => [],
+            'ranges' => [],
             'synced_at' => time(),
             'sources' => [],
         ];
@@ -167,10 +262,90 @@ class IpBlocklistService
         // Remove duplicate CIDRs
         $combined['cidrs'] = array_unique(array_values($combined['cidrs']));
 
+        // Optimization 2: Convert CIDRs to sorted IP ranges for binary search
+        $combined['ranges'] = $this->cidrsToSortedRanges($combined['cidrs']);
+
         // Store in cache with chunking for large data
         $this->storeBlocklistInCache($combined);
 
         return $combined;
+    }
+
+    /**
+     * Convert CIDR list to sorted IP ranges for O(log n) binary search
+     *
+     * Only processes IPv4 CIDRs. IPv6 falls back to linear CIDR matching.
+     *
+     * @param array $cidrs List of CIDR strings (e.g., "192.168.1.0/24")
+     * @return array Sorted array of [start_long, end_long] pairs
+     */
+    protected function cidrsToSortedRanges(array $cidrs): array
+    {
+        $ranges = [];
+
+        foreach ($cidrs as $cidr) {
+            if (!str_contains($cidr, '/')) {
+                continue;
+            }
+
+            [$subnet, $bits] = explode('/', $cidr);
+            $bits = (int) $bits;
+
+            // Only handle IPv4 for range optimization
+            if (!filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                continue;
+            }
+
+            $subnetLong = ip2long($subnet);
+            if ($subnetLong === false) {
+                continue;
+            }
+
+            // Calculate range: apply mask to get start, invert mask for end
+            $mask = $bits === 0 ? 0 : (~0 << (32 - $bits));
+            $start = $subnetLong & $mask;
+            $end = $subnetLong | (~$mask & 0xFFFFFFFF);
+
+            // Store as unsigned strings for proper comparison
+            $ranges[] = [
+                sprintf('%u', $start),
+                sprintf('%u', $end),
+            ];
+        }
+
+        // Sort by range start for binary search
+        usort($ranges, fn($a, $b) => $a[0] <=> $b[0]);
+
+        // Merge overlapping ranges to reduce list size
+        return $this->mergeOverlappingRanges($ranges);
+    }
+
+    /**
+     * Merge overlapping or adjacent IP ranges
+     *
+     * Reduces the number of ranges to search through.
+     */
+    protected function mergeOverlappingRanges(array $ranges): array
+    {
+        if (empty($ranges)) {
+            return [];
+        }
+
+        $merged = [$ranges[0]];
+
+        for ($i = 1; $i < count($ranges); $i++) {
+            $last = &$merged[count($merged) - 1];
+            $current = $ranges[$i];
+
+            // If current range overlaps or is adjacent to last, merge them
+            if ($current[0] <= bcadd($last[1], '1')) {
+                $last[1] = max($last[1], $current[1]);
+            } else {
+                $merged[] = $current;
+            }
+        }
+
+        return $merged;
     }
 
     /**
@@ -184,7 +359,11 @@ class IpBlocklistService
         // Store IPs (usually fits in one key, but could be chunked if needed)
         $cache->set('blocklist_ips', $blocklist['ips'], $ttl);
 
+        // Store optimized IP ranges for binary search
+        $cache->set('blocklist_ranges', $blocklist['ranges'], $ttl);
+
         // Chunk CIDRs (500 per chunk ~= 20-50KB, well under 1MB limit)
+        // Keep CIDRs as fallback for IPv6
         $cidrChunks = array_chunk($blocklist['cidrs'], 500);
         foreach ($cidrChunks as $i => $chunk) {
             $cache->set("blocklist_cidrs_{$i}", $chunk, $ttl);
@@ -196,6 +375,7 @@ class IpBlocklistService
             'sources' => $blocklist['sources'],
             'total_ips' => count($blocklist['ips']),
             'total_cidrs' => count($blocklist['cidrs']),
+            'total_ranges' => count($blocklist['ranges']),
             'cidr_chunks' => count($cidrChunks),
         ];
         $cache->set('blocklist_meta', $meta, $ttl);
@@ -278,7 +458,7 @@ class IpBlocklistService
     }
 
     /**
-     * Check if an IP is within a CIDR range
+     * Check if an IP is within a CIDR range (linear fallback for IPv6)
      */
     protected function ipInCidr(string $ip, string $cidr): bool
     {
@@ -343,6 +523,7 @@ class IpBlocklistService
             return [
                 'total_ips' => $meta['total_ips'] ?? 0,
                 'total_cidrs' => $meta['total_cidrs'] ?? 0,
+                'total_ranges' => $meta['total_ranges'] ?? 0,
                 'synced_at' => $meta['synced_at'] ?? null,
                 'sources' => $meta['sources'] ?? [],
             ];
@@ -354,6 +535,7 @@ class IpBlocklistService
         return [
             'total_ips' => count($blocklist['ips'] ?? []),
             'total_cidrs' => count($blocklist['cidrs'] ?? []),
+            'total_ranges' => count($blocklist['ranges'] ?? []),
             'synced_at' => $blocklist['synced_at'] ?? null,
             'sources' => $blocklist['sources'] ?? [],
         ];
@@ -370,6 +552,7 @@ class IpBlocklistService
         $meta = $cache->get('blocklist_meta');
         $cache->delete('blocklist_meta');
         $cache->delete('blocklist_ips');
+        $cache->delete('blocklist_ranges');
 
         // Clear all CIDR chunks
         if ($meta && isset($meta['cidr_chunks'])) {

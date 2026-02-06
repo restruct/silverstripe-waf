@@ -483,6 +483,47 @@ class WafStorageService
     }
 
     // ========================================================================
+    // Cleanup
+    // ========================================================================
+
+    /**
+     * Clean up expired bans (for scheduled maintenance)
+     */
+    public function cleanupExpiredBans(): int
+    {
+        $mode = $this->getStorageMode();
+        $removed = 0;
+
+        if ($mode === 'file') {
+            $bans = $this->loadBansFromFile();
+            $originalCount = count($bans);
+            $bans = array_filter($bans, fn($ban) => ($ban['expires'] ?? 0) > time());
+            $removed = $originalCount - count($bans);
+            if ($removed > 0) {
+                $this->saveBansToFile($bans);
+            }
+        } elseif ($mode === 'database') {
+            $banClass = 'Restruct\\SilverStripe\\Waf\\Models\\BannedIp';
+            if (class_exists($banClass)) {
+                try {
+                    $expired = $banClass::get()->filter([
+                        'IsPermanent' => false,
+                        'ExpiresAt:LessThan' => date('Y-m-d H:i:s'),
+                    ]);
+                    $removed = $expired->count();
+                    foreach ($expired as $ban) {
+                        $ban->delete();
+                    }
+                } catch (\Exception $e) {
+                    // Ignore DB errors
+                }
+            }
+        }
+
+        return $removed;
+    }
+
+    // ========================================================================
     // Utilities
     // ========================================================================
 

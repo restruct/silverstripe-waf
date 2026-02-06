@@ -4,128 +4,212 @@ After:
   - '#coreconfig'
 ---
 
-# Register middleware
+# =============================================================================
+# SILVERSTRIPE WAF - PHP-LEVEL WEB APPLICATION FIREWALL
+# =============================================================================
+# Blocks malicious requests before they reach your application.
+# See README.md for full documentation.
+
+# -----------------------------------------------------------------------------
+# Core Setup
+# -----------------------------------------------------------------------------
+
 SilverStripe\Core\Injector\Injector:
+  # Register WAF middleware (runs on every request)
   SilverStripe\Control\Director:
     properties:
       Middlewares:
         WafMiddleware: '%$Restruct\SilverStripe\Waf\Middleware\WafMiddleware'
 
-  # Cache for rate limiting and IP lookups
+  # Cache backend for rate limiting, ban checks, and blocklist lookups
+  # Uses your configured cache (Memcached/Redis/file) - no special setup needed
   Psr\SimpleCache\CacheInterface.Waf:
     factory: SilverStripe\Core\Cache\CacheFactory
     constructor:
       namespace: 'Waf'
 
-  # IP Blocklist service
+  # Blocklist service (singleton)
   Restruct\SilverStripe\Waf\Services\IpBlocklistService:
     class: Restruct\SilverStripe\Waf\Services\IpBlocklistService
 
-# WAF Configuration
+# -----------------------------------------------------------------------------
+# Middleware Configuration
+# -----------------------------------------------------------------------------
+
 Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
-  # Enable/disable the middleware
+  # Master switch - set to false to disable all WAF checks
   enabled: true
 
-  # Rate limiting (hard limit - blocks request)
+  # ---------------------------------------------------------------------------
+  # Rate Limiting (Hard Limit)
+  # ---------------------------------------------------------------------------
+  # Blocks requests completely when limit is exceeded.
+  # Returns HTTP 429 Too Many Requests.
   rate_limit_enabled: true
-  rate_limit_requests: 100    # Max requests per window
-  rate_limit_window: 60       # Window in seconds
+  rate_limit_requests: 100      # Max requests per IP per window
+  rate_limit_window: 60         # Window duration in seconds
 
-  # Soft rate limiting (progressive delays before hard block)
+  # ---------------------------------------------------------------------------
+  # Soft Rate Limiting (Progressive Delays)
+  # ---------------------------------------------------------------------------
+  # Slows down requests as they approach the hard limit.
+  # Discourages bots while allowing legitimate burst traffic.
+  #
+  # Example with defaults (threshold 50%, max_delay 3000ms, limit 100):
+  #   50 requests  →  0ms delay (at threshold)
+  #   75 requests  →  1500ms delay
+  #   99 requests  →  2940ms delay
+  #   100+ requests → blocked (hard limit)
   soft_rate_limit_enabled: true
-  soft_rate_limit_threshold: 50   # Start delaying at this % of hard limit
-  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds at hard limit
+  soft_rate_limit_threshold: 50   # % of hard limit where delays start
+  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds (3 seconds)
 
-  # Auto-ban settings
+  # ---------------------------------------------------------------------------
+  # Auto-Ban
+  # ---------------------------------------------------------------------------
+  # Automatically bans IPs after repeated violations.
+  # Violations include: blocklist hits, bad user-agents, rate limit exceeded.
   auto_ban_enabled: true
-  ban_threshold: 10           # Violations before auto-ban
-  ban_duration: 3600          # Ban duration in seconds (1 hour)
+  ban_threshold: 10             # Number of violations before auto-ban
+  ban_duration: 3600            # Ban duration in seconds (1 hour)
 
+  # ---------------------------------------------------------------------------
   # Logging
-  log_blocked_requests: true  # Log to error_log (fail2ban compatible)
+  # ---------------------------------------------------------------------------
+  # Logs blocked requests to error_log in fail2ban-compatible format:
+  # [WAF] BLOCKED reason=blocked_pattern ip=1.2.3.4 uri="/wp-admin/"
+  log_blocked_requests: true
 
-  # Whitelisted IPs (monitoring services, internal IPs)
-  # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated)
+  # ---------------------------------------------------------------------------
+  # IP Whitelist
+  # ---------------------------------------------------------------------------
+  # These IPs skip all WAF checks. Supports single IPs and CIDR notation.
+  # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated).
   whitelisted_ips:
     - '127.0.0.1'
     - '::1'
+    # - '10.0.0.0/8'            # Internal network example
 
-  # Whitelisted user-agent patterns (regex)
+  # ---------------------------------------------------------------------------
+  # User-Agent Whitelist (Regex Patterns)
+  # ---------------------------------------------------------------------------
+  # These user-agents skip the blocked_user_agents check.
+  # Useful for monitoring services and legitimate bots.
   whitelisted_user_agents:
-    - '/ohdear\.app/i'
-    - '/googlebot/i'
-    - '/bingbot/i'
-    - '/uptimerobot/i'
-    - '/pingdom/i'
+    - '/ohdear\.app/i'          # OhDear monitoring
+    - '/googlebot/i'            # Google crawler
+    - '/bingbot/i'              # Bing crawler
+    - '/uptimerobot/i'          # UptimeRobot monitoring
+    - '/pingdom/i'              # Pingdom monitoring
 
-  # Bad user-agent patterns to block (regex)
+  # ---------------------------------------------------------------------------
+  # User-Agent Blocklist (Regex Patterns)
+  # ---------------------------------------------------------------------------
+  # Requests matching these patterns are blocked immediately.
   blocked_user_agents:
-    - '/^$/i'                 # Empty user-agent
-    - '/sqlmap/i'
-    - '/nikto/i'
-    - '/nmap/i'
-    - '/masscan/i'
-    - '/zgrab/i'
-    - '/gobuster/i'
-    - '/dirbuster/i'
-    - '/wpscan/i'
+    - '/^$/i'                   # Empty user-agent (common in bots)
+    - '/sqlmap/i'               # SQL injection tool
+    - '/nikto/i'                # Vulnerability scanner
+    - '/nmap/i'                 # Network scanner
+    - '/masscan/i'              # Mass port scanner
+    - '/zgrab/i'                # Go-based scanner
+    - '/gobuster/i'             # Directory brute-forcer
+    - '/dirbuster/i'            # Directory brute-forcer
+    - '/wpscan/i'               # WordPress scanner
 
-# Storage configuration
-# Determines where bans and blocked request logs are stored
+# -----------------------------------------------------------------------------
+# Storage Configuration
+# -----------------------------------------------------------------------------
+# Determines where bans and blocked request logs are persisted.
+
 Restruct\SilverStripe\Waf\Services\WafStorageService:
-  # Storage mode:
-  # - 'cache': Pure cache, fastest, data volatile (good under attack)
-  # - 'file': Cache + JSON files in silverstripe-cache/ (admin viewable, no DB)
-  # - 'database': Cache + DB (full persistence, highest overhead)
+  # Storage mode - choose based on your needs:
+  #
+  # 'cache'    - Pure cache only (Memcached/Redis)
+  #              Fastest, but data lost on cache clear
+  #              Best for: Under attack, max performance needed
+  #
+  # 'file'     - Cache + JSON files in silverstripe-cache/
+  #              No database queries, survives cache clear
+  #              Best for: Normal operation, most sites (DEFAULT)
+  #
+  # 'database' - Cache + database tables
+  #              Full persistence, enables DataObject queries
+  #              Best for: Audit requirements, large teams
+  #
+  # Can override via WAF_STORAGE_MODE environment variable.
   storage_mode: 'file'
 
-  # File paths (relative to BASE_PATH or absolute)
+  # File paths for 'file' mode (relative to BASE_PATH or absolute)
   blocked_log_file: 'silverstripe-cache/waf_blocked.jsonl'
   bans_file: 'silverstripe-cache/waf_bans.json'
 
-  # Max entries in blocked log (auto-rotates)
+  # Max entries in blocked log before auto-rotation
   max_log_entries: 1000
 
-  # Under high load, skip file/DB persistence (violations/minute threshold)
+  # High-load protection threshold
+  # When violations per minute exceed this, skip all persistence
+  # (runs in pure cache mode to maintain performance under attack)
   # Set to 0 to disable high-load detection
   high_load_threshold: 100
 
-# IP Blocklist sync configuration
+# -----------------------------------------------------------------------------
+# IP Blocklist Service
+# -----------------------------------------------------------------------------
+# Downloads and caches threat intelligence feeds.
+
 Restruct\SilverStripe\Waf\Services\IpBlocklistService:
-  # Enable threat intelligence feed sync
+  # Enable/disable blocklist checking
   sync_enabled: true
 
-  # Cache duration for blocklist (seconds)
-  cache_duration: 3600
+  # How long to cache the blocklist (seconds)
+  # Feeds are only re-downloaded after this expires
+  cache_duration: 3600          # 1 hour
 
-  # Blocklist sources (downloaded and cached)
+  # How long to cache per-IP lookup results (seconds)
+  # Reduces repeated lookups for the same visitor
+  ip_result_cache_duration: 60  # 1 minute
+
+  # ---------------------------------------------------------------------------
+  # Blocklist Sources
+  # ---------------------------------------------------------------------------
+  # Add or modify threat intelligence feeds here.
+  # Supported formats: 'ip', 'cidr', 'cidr_semicolon'
   blocklist_sources:
-    # FireHOL Level 1 - most aggressive attacks
+    # FireHOL Level 1 - aggregated list of most aggressive attackers
+    # ~4,500 CIDR entries, updated frequently
     firehol_level1:
       url: 'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset'
       enabled: true
-      format: 'cidr'          # One CIDR per line
+      format: 'cidr'            # One CIDR per line
 
-    # Binary Defense ban list
+    # Binary Defense ban list - IPs attacking their honeypots
+    # Small list, updated in real-time
     binarydefense:
       url: 'https://www.binarydefense.com/banlist.txt'
       enabled: true
-      format: 'ip'            # One IP per line
+      format: 'ip'              # One IP per line
 
-    # Spamhaus DROP (Don't Route Or Peer)
-    # Note: Check Spamhaus terms of use for commercial use
+    # Spamhaus DROP (Don't Route Or Peer) - hijacked IP ranges
+    # Note: Review Spamhaus terms of use for commercial applications
     spamhaus_drop:
       url: 'https://www.spamhaus.org/drop/drop.txt'
-      enabled: false
-      format: 'cidr_semicolon'  # CIDR ; comment
+      enabled: false            # Disabled by default
+      format: 'cidr_semicolon'  # "CIDR ; comment" format
 
-  # Local blocklist file (optional, one IP/CIDR per line)
+  # Local blocklist file (optional)
+  # One IP or CIDR per line, lines starting with # are comments
   local_blocklist_file: null    # e.g., '/path/to/custom-blocklist.txt'
 
-# URL patterns to block (applied in early filter and middleware)
+# -----------------------------------------------------------------------------
+# Early Filter Configuration
+# -----------------------------------------------------------------------------
+# URL patterns blocked before Silverstripe loads (minimal overhead).
+
 Restruct\SilverStripe\Waf\EarlyFilter:
+  # URL patterns to block (substring match, case-insensitive)
   blocked_patterns:
-    # WordPress probes
+    # WordPress probes (very common on any PHP site)
     - '/wp-admin'
     - '/wp-login'
     - '/wp-content'
@@ -133,7 +217,7 @@ Restruct\SilverStripe\Waf\EarlyFilter:
     - '/xmlrpc.php'
     - '/wp-config'
 
-    # PHP backdoor/webshell paths
+    # PHP backdoors and webshells
     - '/eval-stdin.php'
     - '/alfacgiapi'
     - '/alfa-rex'
@@ -142,7 +226,7 @@ Restruct\SilverStripe\Waf\EarlyFilter:
     - '/r57.php'
     - '/wso.php'
 
-    # Config/sensitive file probes
+    # Config and sensitive files
     - '/.env'
     - '/.git'
     - '/.svn'
@@ -153,22 +237,55 @@ Restruct\SilverStripe\Waf\EarlyFilter:
     - '/LocalSettings.php'
     - '/web.config'
 
-    # Other CMS probes
+    # Other CMS admin paths
     - '/administrator/index.php'
     - '/phpmyadmin'
     - '/pma/'
     - '/myadmin/'
     - '/adminer'
 
-    # Path traversal
+    # Path traversal attempts
     - '../'
     - '..%2f'
     - '..%252f'
 
-  # Suspicious PHP file pattern (random 2-8 char names)
+  # Block random PHP file probes (e.g., /abc123.php, /xyz.php)
+  # These are typically looking for uploaded webshells
   block_random_php_probes: true
   php_probe_pattern: '/^\/[a-z0-9_]{2,8}\.php$/i'
 
-  # Legitimate short PHP files (whitelist)
+  # Short PHP files that are legitimate (won't be blocked)
   legitimate_php_files:
     - '/index.php'
+
+# -----------------------------------------------------------------------------
+# QueuedJobs Integration (Optional)
+# -----------------------------------------------------------------------------
+# Auto-schedules blocklist sync if symbiote/silverstripe-queuedjobs is installed.
+# The job runs every 6 hours and self-reschedules.
+
+---
+Name: silverstripe-waf-queuedjobs
+After:
+  - '#silverstripe-waf'
+Only:
+  moduleexists: 'symbiote/silverstripe-queuedjobs'
+---
+
+# Configure the sync job to run every 6 hours
+Restruct\SilverStripe\Waf\Jobs\SyncBlocklistsJob:
+  reschedule_interval: 21600    # 6 hours in seconds
+
+# Auto-create the job on first run
+SilverStripe\Core\Injector\Injector:
+  Symbiote\QueuedJobs\Services\QueuedJobService:
+    properties:
+      defaultJobs:
+        WafSyncBlocklistsJob:
+          type: 'Restruct\SilverStripe\Waf\Jobs\SyncBlocklistsJob'
+          filter:
+            Implementation: 'Restruct\SilverStripe\Waf\Jobs\SyncBlocklistsJob'
+          recreate: 1
+          startDateFormat: 'Y-m-d H:i:s'
+          startTimeString: '+5 minutes'
+          construct:
