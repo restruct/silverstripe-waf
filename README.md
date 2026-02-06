@@ -152,6 +152,22 @@ Or via environment variable:
 WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8,10.0.0.0/8"
 ```
 
+### User-Agent Whitelist
+
+Monitoring services and legitimate bots can be whitelisted by user-agent pattern (regex):
+
+```yaml
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  whitelisted_user_agents:
+    - '/ohdear\.app/i'    # OhDear monitoring
+    - '/googlebot/i'      # Google crawler
+    - '/bingbot/i'        # Bing crawler
+    - '/uptimerobot/i'    # UptimeRobot
+    - '/pingdom/i'        # Pingdom
+```
+
+These skip the `blocked_user_agents` check (empty user-agent, security scanners, etc.).
+
 ### Blocklist Sources
 
 ```yaml
