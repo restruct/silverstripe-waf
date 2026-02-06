@@ -1,0 +1,155 @@
+---
+Name: silverstripe-waf
+After:
+  - '#coreconfig'
+---
+
+# Register middleware
+SilverStripe\Core\Injector\Injector:
+  SilverStripe\Control\Director:
+    properties:
+      Middlewares:
+        WafMiddleware: '%$Restruct\SilverStripe\Waf\Middleware\WafMiddleware'
+
+  # Cache for rate limiting and IP lookups
+  Psr\SimpleCache\CacheInterface.Waf:
+    factory: SilverStripe\Core\Cache\CacheFactory
+    constructor:
+      namespace: 'Waf'
+
+  # IP Blocklist service
+  Restruct\SilverStripe\Waf\Services\IpBlocklistService:
+    class: Restruct\SilverStripe\Waf\Services\IpBlocklistService
+
+# WAF Configuration
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  # Enable/disable the middleware
+  enabled: true
+
+  # Rate limiting (hard limit - blocks request)
+  rate_limit_enabled: true
+  rate_limit_requests: 100    # Max requests per window
+  rate_limit_window: 60       # Window in seconds
+
+  # Soft rate limiting (progressive delays before hard block)
+  soft_rate_limit_enabled: true
+  soft_rate_limit_threshold: 50   # Start delaying at this % of hard limit
+  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds at hard limit
+
+  # Auto-ban settings
+  auto_ban_enabled: true
+  ban_threshold: 10           # Violations before auto-ban
+  ban_duration: 3600          # Ban duration in seconds (1 hour)
+
+  # Logging
+  log_blocked_requests: true
+  log_to_database: true       # Store in BlockedRequest table
+
+  # Whitelisted IPs (monitoring services, internal IPs)
+  # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated)
+  whitelisted_ips:
+    - '127.0.0.1'
+    - '::1'
+
+  # Whitelisted user-agent patterns (regex)
+  whitelisted_user_agents:
+    - '/ohdear\.app/i'
+    - '/googlebot/i'
+    - '/bingbot/i'
+    - '/uptimerobot/i'
+    - '/pingdom/i'
+
+  # Bad user-agent patterns to block (regex)
+  blocked_user_agents:
+    - '/^$/i'                 # Empty user-agent
+    - '/sqlmap/i'
+    - '/nikto/i'
+    - '/nmap/i'
+    - '/masscan/i'
+    - '/zgrab/i'
+    - '/gobuster/i'
+    - '/dirbuster/i'
+    - '/wpscan/i'
+
+# IP Blocklist sync configuration
+Restruct\SilverStripe\Waf\Services\IpBlocklistService:
+  # Enable threat intelligence feed sync
+  sync_enabled: true
+
+  # Cache duration for blocklist (seconds)
+  cache_duration: 3600
+
+  # Blocklist sources (downloaded and cached)
+  blocklist_sources:
+    # FireHOL Level 1 - most aggressive attacks
+    firehol_level1:
+      url: 'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset'
+      enabled: true
+      format: 'cidr'          # One CIDR per line
+
+    # Binary Defense ban list
+    binarydefense:
+      url: 'https://www.binarydefense.com/banlist.txt'
+      enabled: true
+      format: 'ip'            # One IP per line
+
+    # Spamhaus DROP (Don't Route Or Peer)
+    # Note: Check Spamhaus terms of use for commercial use
+    spamhaus_drop:
+      url: 'https://www.spamhaus.org/drop/drop.txt'
+      enabled: false
+      format: 'cidr_semicolon'  # CIDR ; comment
+
+  # Local blocklist file (optional, one IP/CIDR per line)
+  local_blocklist_file: null    # e.g., '/path/to/custom-blocklist.txt'
+
+# URL patterns to block (applied in early filter and middleware)
+Restruct\SilverStripe\Waf\EarlyFilter:
+  blocked_patterns:
+    # WordPress probes
+    - '/wp-admin'
+    - '/wp-login'
+    - '/wp-content'
+    - '/wp-includes'
+    - '/xmlrpc.php'
+    - '/wp-config'
+
+    # PHP backdoor/webshell paths
+    - '/eval-stdin.php'
+    - '/alfacgiapi'
+    - '/alfa-rex'
+    - '/shell.php'
+    - '/c99.php'
+    - '/r57.php'
+    - '/wso.php'
+
+    # Config/sensitive file probes
+    - '/.env'
+    - '/.git'
+    - '/.svn'
+    - '/.htpasswd'
+    - '/.htaccess'
+    - '/config.php'
+    - '/configuration.php'
+    - '/LocalSettings.php'
+    - '/web.config'
+
+    # Other CMS probes
+    - '/administrator/index.php'
+    - '/phpmyadmin'
+    - '/pma/'
+    - '/myadmin/'
+    - '/adminer'
+
+    # Path traversal
+    - '../'
+    - '..%2f'
+    - '..%252f'
+
+  # Suspicious PHP file pattern (random 2-8 char names)
+  block_random_php_probes: true
+  php_probe_pattern: '/^\/[a-z0-9_]{2,8}\.php$/i'
+
+  # Legitimate short PHP files (whitelist)
+  legitimate_php_files:
+    - '/index.php'
