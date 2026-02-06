@@ -58,6 +58,11 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # Enable/disable
   enabled: true
 
+  # Storage mode: 'cache' (default) or 'database'
+  # - cache: Uses PSR-16 cache only (fast, no DB queries)
+  # - database: Also persists to DB (survives cache clear, enables CMS admin)
+  storage_mode: 'cache'
+
   # Rate limiting (hard block)
   rate_limit_enabled: true
   rate_limit_requests: 100    # Max requests per minute
@@ -78,6 +83,15 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
     - '127.0.0.1'
     - '10.0.0.0/8'            # Internal network
 ```
+
+### Storage Modes
+
+| Mode | DB Queries | Persistence | Use Case |
+|------|------------|-------------|----------|
+| `cache` (default) | **None** | Until cache expires | High-traffic sites, Redis/APCu available |
+| `database` | On ban check miss | Permanent | Need CMS admin, audit logs |
+
+For best performance, use `cache` mode with Redis or APCu:
 
 ### Environment Variables
 

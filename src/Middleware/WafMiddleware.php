@@ -52,7 +52,10 @@ class WafMiddleware implements HTTPMiddleware
 
     // Logging
     private static bool $log_blocked_requests = true;
-    private static bool $log_to_database = true;
+    private static bool $log_to_database = false;  // Disabled by default to minimize DB queries
+
+    // Storage mode: 'cache' (fast, no DB) or 'database' (persistent, more overhead)
+    private static string $storage_mode = 'cache';
 
     // Whitelists
     private static array $whitelisted_ips = [];
@@ -146,24 +149,26 @@ class WafMiddleware implements HTTPMiddleware
         $cache = $this->getCache();
         $cacheKey = 'banned_' . md5($ip);
 
-        // Check cache first (fast)
+        // Check cache first (fast) - this is the primary check
         if ($cache->has($cacheKey)) {
             return true;
         }
 
-        // Check database for persistent bans
-        $ban = BannedIp::get()->filter([
-            'IpAddress' => $ip,
-            'ExpiresAt:GreaterThan' => date('Y-m-d H:i:s'),
-        ])->first();
+        // Only check database if storage_mode is 'database'
+        if ($this->config()->get('storage_mode') === 'database') {
+            $ban = BannedIp::get()->filter([
+                'IpAddress' => $ip,
+                'ExpiresAt:GreaterThan' => date('Y-m-d H:i:s'),
+            ])->first();
 
-        if ($ban) {
-            // Cache the result for faster subsequent checks
-            $ttl = strtotime($ban->ExpiresAt) - time();
-            if ($ttl > 0) {
-                $cache->set($cacheKey, true, $ttl);
+            if ($ban) {
+                // Cache the result for faster subsequent checks
+                $ttl = strtotime($ban->ExpiresAt) - time();
+                if ($ttl > 0) {
+                    $cache->set($cacheKey, true, $ttl);
+                }
+                return true;
             }
-            return true;
         }
 
         return false;
@@ -322,17 +327,23 @@ class WafMiddleware implements HTTPMiddleware
 
     protected function banIp(string $ip, int $duration, string $reason): void
     {
-        // Cache ban
+        // Always cache ban (primary storage, fast)
         $cache = $this->getCache();
         $cacheKey = 'banned_' . md5($ip);
         $cache->set($cacheKey, true, $duration);
 
-        // Store in database for persistence
-        $ban = BannedIp::create();
-        $ban->IpAddress = $ip;
-        $ban->Reason = $reason;
-        $ban->ExpiresAt = date('Y-m-d H:i:s', time() + $duration);
-        $ban->write();
+        // Only store in database if storage_mode is 'database'
+        if ($this->config()->get('storage_mode') === 'database') {
+            try {
+                $ban = BannedIp::create();
+                $ban->IpAddress = $ip;
+                $ban->Reason = $reason;
+                $ban->ExpiresAt = date('Y-m-d H:i:s', time() + $duration);
+                $ban->write();
+            } catch (\Exception $e) {
+                // Don't fail on DB error
+            }
+        }
 
         // Log
         error_log(sprintf(

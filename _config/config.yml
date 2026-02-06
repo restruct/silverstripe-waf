@@ -41,9 +41,14 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   ban_threshold: 10           # Violations before auto-ban
   ban_duration: 3600          # Ban duration in seconds (1 hour)
 
+  # Storage mode: 'cache' (default, no DB queries) or 'database' (persistent)
+  # 'cache' - Uses PSR-16 cache only (Redis/APCu/file), bans expire with cache
+  # 'database' - Also persists bans/logs to DB (survives cache clear, but more overhead)
+  storage_mode: 'cache'
+
   # Logging
-  log_blocked_requests: true
-  log_to_database: true       # Store in BlockedRequest table
+  log_blocked_requests: true  # Log to error_log (fail2ban compatible)
+  log_to_database: false      # Store in BlockedRequest table (requires storage_mode: database)
 
   # Whitelisted IPs (monitoring services, internal IPs)
   # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated)
