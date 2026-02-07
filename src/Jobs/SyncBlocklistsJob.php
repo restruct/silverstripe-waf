@@ -4,6 +4,7 @@ namespace Restruct\SilverStripe\Waf\Jobs;
 
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
+use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Injector\Injector;
 use Symbiote\QueuedJobs\Services\AbstractQueuedJob;
 use Symbiote\QueuedJobs\Services\QueuedJob;
@@ -20,6 +21,7 @@ use Symbiote\QueuedJobs\Services\QueuedJobService;
  */
 class SyncBlocklistsJob extends AbstractQueuedJob implements QueuedJob
 {
+    use Configurable;
     /**
      * How often to run (6 hours in seconds)
      */
