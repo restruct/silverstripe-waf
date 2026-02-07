@@ -1,7 +1,7 @@
 ---
 Name: silverstripe-waf
 After:
-  - '#coreconfig'
+  - corecache
 ---
 
 # =============================================================================
@@ -81,6 +81,15 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   log_blocked_requests: true
 
   # ---------------------------------------------------------------------------
+  # Error Pages
+  # ---------------------------------------------------------------------------
+  # Use styled ErrorPage for rate limit (429) responses.
+  # Creates friendlier experience for legitimate users who hit rate limits.
+  # Requires silverstripe/errorpage module and a published 429 error page.
+  # Falls back to plain text if ErrorPage not available.
+  use_styled_error_pages: true
+
+  # ---------------------------------------------------------------------------
   # IP Whitelist
   # ---------------------------------------------------------------------------
   # These IPs skip all WAF checks. Supports single IPs and CIDR notation.
@@ -129,7 +138,7 @@ Restruct\SilverStripe\Waf\Services\WafStorageService:
   #              Fastest, but data lost on cache clear
   #              Best for: Under attack, max performance needed
   #
-  # 'file'     - Cache + JSON files in silverstripe-cache/
+  # 'file'     - Cache + JSON files in TEMP_PATH (same as framework cache)
   #              No database queries, survives cache clear
   #              Best for: Normal operation, most sites (DEFAULT)
   #
@@ -140,9 +149,9 @@ Restruct\SilverStripe\Waf\Services\WafStorageService:
   # Can override via WAF_STORAGE_MODE environment variable.
   storage_mode: 'file'
 
-  # File paths for 'file' mode (relative to BASE_PATH or absolute)
-  blocked_log_file: 'silverstripe-cache/waf_blocked.jsonl'
-  bans_file: 'silverstripe-cache/waf_bans.json'
+  # Filenames for 'file' mode (stored in TEMP_PATH, or absolute path if starts with /)
+  blocked_log_file: 'waf_blocked.jsonl'
+  bans_file: 'waf_bans.json'
 
   # Max entries in blocked log before auto-rotation
   max_log_entries: 1000

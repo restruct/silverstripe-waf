@@ -7,6 +7,7 @@ use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Core\TempFolder;
 use SilverStripe\ORM\ArrayList;
 use SilverStripe\View\ArrayData;
 
@@ -28,9 +29,9 @@ class WafStorageService
     // Storage mode: 'cache', 'file', or 'database'
     private static string $storage_mode = 'file';
 
-    // File storage paths (relative to project root or absolute)
-    private static string $blocked_log_file = 'silverstripe-cache/waf_blocked.jsonl';
-    private static string $bans_file = 'silverstripe-cache/waf_bans.json';
+    // File storage filenames (stored in TEMP_PATH, same as framework cache)
+    private static string $blocked_log_file = 'waf_blocked.jsonl';
+    private static string $bans_file = 'waf_bans.json';
 
     // Max entries to keep in log file
     private static int $max_log_entries = 1000;
@@ -221,20 +222,20 @@ class WafStorageService
 
     protected function getBansFilePath(): string
     {
-        $path = $this->config()->get('bans_file');
-        if ($path[0] !== '/') {
-            $path = BASE_PATH . '/' . $path;
+        $filename = $this->config()->get('bans_file');
+        if ($filename[0] === '/') {
+            return $filename; // Absolute path
         }
-        return $path;
+        return TempFolder::getTempFolder(BASE_PATH) . '/' . $filename;
     }
 
     protected function getBlockedLogPath(): string
     {
-        $path = $this->config()->get('blocked_log_file');
-        if ($path[0] !== '/') {
-            $path = BASE_PATH . '/' . $path;
+        $filename = $this->config()->get('blocked_log_file');
+        if ($filename[0] === '/') {
+            return $filename; // Absolute path
         }
-        return $path;
+        return TempFolder::getTempFolder(BASE_PATH) . '/' . $filename;
     }
 
     protected function loadBansFromFile(): array

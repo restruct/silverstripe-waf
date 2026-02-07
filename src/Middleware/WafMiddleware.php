@@ -70,6 +70,9 @@ class WafMiddleware implements HTTPMiddleware
     // Blocklists
     private static array $blocked_user_agents = [];
 
+    // Error pages - use styled ErrorPage for rate limit responses (friendlier for legitimate users)
+    private static bool $use_styled_error_pages = true;
+
     // ========================================================================
     // Middleware Entry Point
     // ========================================================================
@@ -166,6 +169,10 @@ class WafMiddleware implements HTTPMiddleware
      */
     protected function ipMatchesCidr(string $ip, string $cidr): bool
     {
+        if (!str_contains($cidr, '/')) {
+            return false;
+        }
+
         [$subnet, $bits] = explode('/', $cidr);
         $bits = (int) $bits;
 
@@ -371,10 +378,26 @@ class WafMiddleware implements HTTPMiddleware
     {
         $this->logBlockedRequest($request, 'rate_limit', 'Rate limit exceeded');
 
+        $retryAfter = (string) $this->config()->get('rate_limit_window');
+
+        // Try to use styled ErrorPage for friendlier response to legitimate users
+        if ($this->config()->get('use_styled_error_pages')) {
+            $errorPageClass = 'SilverStripe\\ErrorPage\\ErrorPage';
+            if (class_exists($errorPageClass) && method_exists($errorPageClass, 'response_for')) {
+                $response = $errorPageClass::response_for(429);
+                if ($response) {
+                    $response->addHeader('Retry-After', $retryAfter);
+                    $response->addHeader('Cache-Control', 'no-store');
+                    return $response;
+                }
+            }
+        }
+
+        // Fallback to plain text
         return HTTPResponse::create()
             ->setStatusCode(429)
             ->addHeader('Content-Type', 'text/plain')
-            ->addHeader('Retry-After', (string) $this->config()->get('rate_limit_window'))
+            ->addHeader('Retry-After', $retryAfter)
             ->addHeader('Cache-Control', 'no-store')
             ->setBody('Too Many Requests');
     }

@@ -14,7 +14,7 @@ use SilverStripe\Dev\BuildTask;
  *   vendor/bin/sake dev/tasks/waf-sync-blocklists
  *
  * Schedule via cron (recommended every 6 hours):
- *   0 */6 * * * cd /path/to/site && vendor/bin/sake dev/tasks/waf-sync-blocklists
+ *   0 0,6,12,18 * * * cd /path/to/site && vendor/bin/sake dev/tasks/waf-sync-blocklists
  *
  * Or use the SyncBlocklistsJob for QueuedJobs module integration.
  */

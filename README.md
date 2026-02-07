@@ -27,22 +27,25 @@ vendor/bin/sake dev/build flush=1
 
 ### Enable Early Filter (Recommended)
 
-Add to your `public/index.php` **before** the Silverstripe bootstrap:
+Add to your `public/index.php` **at the very top**, before `use` statements:
 
 ```php
 <?php
 
 // WAF Early Filter - runs before framework loads
-$wafFilter = dirname(__DIR__) . '/vendor/restruct/silverstripe-waf/public/_waf_early_filter.php';
+$wafFilter = dirname(__DIR__) . '/vendor/restruct/silverstripe-waf/_waf_early_filter.php';
 if (file_exists($wafFilter)) {
     require_once $wafFilter;
 }
 
-// Silverstripe bootstrap
-require dirname(__DIR__) . '/vendor/autoload.php';
+use SilverStripe\Control\HTTPApplication;
+use SilverStripe\Control\HTTPRequestBuilder;
+use SilverStripe\Core\CoreKernel;
 
 // ... rest of index.php
 ```
+
+**Why before `use` statements?** The `use` statements are just namespace aliases (resolved at compile time), so the practical difference is minimal. However, placing the WAF filter first makes the security-first intent clear and ensures blocked requests parse the absolute minimum PHP before exiting.
 
 ## Performance & Resource Footprint
 
@@ -133,6 +136,22 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
 | 90 | 2400ms |
 | 99 | 2940ms |
 | 100+ | Blocked (429) |
+
+### 429 Error Page
+
+When rate limits are exceeded, the module can show a styled error page (friendlier for legitimate users) instead of plain text. This requires the `silverstripe/errorpage` module and a published 429 error page.
+
+**Create a 429 error page in the CMS:**
+1. Go to **Settings > Error Pages** (or create an ErrorPage in the site tree)
+2. Create a new error page with code **429**
+3. Add a friendly message like "You're making too many requests. Please wait a moment and try again."
+4. Publish the page
+
+**Disable styled error pages** (return plain text instead):
+```yaml
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  use_styled_error_pages: false
+```
 
 ### IP Whitelist
 
@@ -267,6 +286,26 @@ The early filter blocks these by default:
 
 **Path traversal:** `../`, `..%2f`, `..%252f`
 
+### Why Path Blocking, Not Payload Inspection?
+
+This module intentionally focuses on **path-based blocking** rather than SQLi/XSS payload inspection:
+
+| Approach | False Positive Risk | Value for Silverstripe |
+|----------|---------------------|------------------------|
+| Path blocking | **Near zero** - paths like `/wp-admin` should never exist | High - stops scanners before framework loads |
+| SQLi/XSS filtering | **Higher** - legitimate content may contain patterns | Low - framework already handles this |
+
+**Silverstripe's built-in protection:**
+- **SQLi**: ORM uses parameterized queries; `->filter()` escapes automatically
+- **XSS**: Templates auto-escape by default; `$casting` system enforces output encoding
+
+**Early filter is best for:**
+- Blocking paths that should never be requested (zero false positives)
+- Reducing scanner noise and saving resources
+- Defense in depth at the perimeter
+
+**For payload inspection**, use ModSecurity at the web server level where it's optimized for this purpose.
+
 ## Extending
 
 ### Add Custom Blocked Patterns
@@ -304,6 +343,45 @@ WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8"
 # Override storage mode
 WAF_STORAGE_MODE=cache
 ```
+
+## Testing
+
+The module includes comprehensive unit tests covering:
+
+- **IP Range Handling** - CIDR to range conversion, numeric sorting, binary search, range merging
+- **High-Load Detection** - Violation counting, threshold detection, automatic fallback
+- **Rate Limiting** - Soft limit delay calculations, cap at maximum
+- **Pattern Matching** - User-agent blocking, CIDR whitelist matching, path probe detection
+
+### Running Tests
+
+From your project root (with path repository setup):
+
+```bash
+# Ensure PHPUnit is installed
+composer require --dev phpunit/phpunit
+
+# Run tests
+vendor/bin/phpunit --bootstrap vendor/autoload.php _dev/silverstripe-waf/tests/
+```
+
+Or if the module is installed standalone:
+
+```bash
+cd vendor/restruct/silverstripe-waf
+composer install
+vendor/bin/phpunit
+```
+
+### Test Coverage
+
+| Component | Tests |
+|-----------|-------|
+| IpBlocklistService | 13 |
+| WafStorageService | 9 |
+| WafMiddleware | 6 |
+| EarlyFilter | 8 |
+| **Total** | **36** |
 
 ## Complementary Module
 

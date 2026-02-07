@@ -128,18 +128,21 @@ class IpBlocklistService
         $ipLong = sprintf('%u', $ipLong);
 
         // Binary search: find the last range where start <= ip
+        // Cast to int for proper numeric comparison (64-bit PHP handles IPv4 range easily)
+        $ipInt = (int) $ipLong;
         $left = 0;
         $right = count($ranges) - 1;
 
         while ($left <= $right) {
             $mid = (int) (($left + $right) / 2);
-            $range = $ranges[$mid];
+            $rangeStart = (int) $ranges[$mid][0];
+            $rangeEnd = (int) $ranges[$mid][1];
 
-            if ($ipLong >= $range[0] && $ipLong <= $range[1]) {
+            if ($ipInt >= $rangeStart && $ipInt <= $rangeEnd) {
                 return true; // IP is within this range
             }
 
-            if ($ipLong < $range[0]) {
+            if ($ipInt < $rangeStart) {
                 $right = $mid - 1;
             } else {
                 $left = $mid + 1;
@@ -313,8 +316,8 @@ class IpBlocklistService
             ];
         }
 
-        // Sort by range start for binary search
-        usort($ranges, fn($a, $b) => $a[0] <=> $b[0]);
+        // Sort by range start for binary search (numeric comparison required)
+        usort($ranges, fn($a, $b) => (int) $a[0] <=> (int) $b[0]);
 
         // Merge overlapping ranges to reduce list size
         return $this->mergeOverlappingRanges($ranges);
@@ -338,8 +341,12 @@ class IpBlocklistService
             $current = $ranges[$i];
 
             // If current range overlaps or is adjacent to last, merge them
-            if ($current[0] <= bcadd($last[1], '1')) {
-                $last[1] = max($last[1], $current[1]);
+            // Use int comparison (64-bit PHP handles IPv4 range easily, no bcmath needed)
+            if ((int) $current[0] <= (int) $last[1] + 1) {
+                // Keep the larger end value
+                if ((int) $current[1] > (int) $last[1]) {
+                    $last[1] = $current[1];
+                }
             } else {
                 $merged[] = $current;
             }
@@ -386,20 +393,59 @@ class IpBlocklistService
      */
     protected function fetchBlocklist(string $url, string $format): array
     {
-        $context = stream_context_create([
-            'http' => [
-                'timeout' => 30,
-                'user_agent' => 'Silverstripe-WAF/1.0',
-            ],
-        ]);
-
-        $content = @file_get_contents($url, false, $context);
+        $content = $this->fetchUrl($url);
 
         if ($content === false) {
             throw new \RuntimeException("Failed to fetch blocklist from: {$url}");
         }
 
         return $this->parseBlocklistFile($content, $format);
+    }
+
+    /**
+     * Fetch URL content using cURL (preferred) or file_get_contents (fallback)
+     */
+    protected function fetchUrl(string $url): string|false
+    {
+        // Prefer cURL - more universally available than allow_url_fopen
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_TIMEOUT => 30,
+                CURLOPT_CONNECTTIMEOUT => 10,
+                CURLOPT_USERAGENT => 'Silverstripe-WAF/1.0',
+                CURLOPT_SSL_VERIFYPEER => true,
+            ]);
+
+            $content = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+            curl_close($ch);
+
+            if ($content !== false && $httpCode >= 200 && $httpCode < 300) {
+                return $content;
+            }
+
+            // Log cURL failure, try fallback
+            error_log("[WAF] cURL fetch failed for {$url}: HTTP {$httpCode} - {$error}");
+        }
+
+        // Fallback to file_get_contents (requires allow_url_fopen=On)
+        if (ini_get('allow_url_fopen')) {
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => 30,
+                    'user_agent' => 'Silverstripe-WAF/1.0',
+                ],
+            ]);
+
+            return @file_get_contents($url, false, $context);
+        }
+
+        return false;
     }
 
     /**
