@@ -95,6 +95,18 @@ The module uses chunked cache storage (500 entries per chunk) to work within Mem
 | Apache mod_security | 5-20ms | Depends on ruleset complexity |
 | No WAF | 0ms | But vulnerable to attacks |
 
+### Real-World Benchmark
+
+TTFB comparison on a Silverstripe 5 site (PHP 8.3, shared hosting) with WAF enabled vs disabled:
+
+| Page | WITH WAF | WITHOUT WAF | WITH WAF (restored) |
+|------|----------|-------------|---------------------|
+| Homepage | 388-569ms (~501ms) | 468-532ms (~505ms) | 315-567ms (~488ms) |
+| Content page 1 | 599-662ms (~618ms) | 557-615ms (~596ms) | 589-615ms (~603ms) |
+| Content page 2 | 459-658ms (~525ms) | 441-600ms (~503ms) | 345-590ms (~503ms) |
+
+**Conclusion:** No measurable TTFB impact. All results fall within normal variance (~50-100ms). The WAF overhead is negligible compared to framework and database processing time.
+
 ## Configuration
 
 All configuration is in `_config/config.yml` with extensive comments. Key options:
