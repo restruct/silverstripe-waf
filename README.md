@@ -199,6 +199,20 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
 
 These skip the `blocked_user_agents` check (empty user-agent, security scanners, etc.).
 
+**Important:** User-agent whitelisting only bypasses the blocked user-agent check. Whitelisted crawlers are still subject to rate limiting and auto-ban. To fully bypass WAF for trusted services, add their IP to `whitelisted_ips`.
+
+### Crawlers & Monitoring Tools
+
+The default rate limit is **100 requests/minute**. Crawlers exceeding this will:
+1. Receive 429 (Too Many Requests) responses
+2. After repeated violations (default: 10), get auto-banned for 1 hour (403 Forbidden)
+
+**Recommended crawler settings:**
+- Max 1 request/second (~60/minute) to stay safely under the limit
+- Or whitelist the crawler's IP for full bypass
+
+For example, OhDear's default "2 concurrent, 250ms" setting equals ~480 requests/minute - far exceeding the limit. Configure slower crawling or whitelist OhDear's IP addresses.
+
 ### Blocklist Sources
 
 ```yaml
