@@ -420,4 +420,4 @@ This module pairs well with [restruct/silverstripe-security-baseline](https://gi
 
 ## License
 
-BSD-3-Clause
+MIT
