@@ -1,0 +1,206 @@
+---
+Name: silverstripe-waf
+---
+
+# =============================================================================
+# SILVERSTRIPE WAF - PHP-LEVEL WEB APPLICATION FIREWALL (SS3 Backport)
+# =============================================================================
+# Blocks malicious requests before they reach your application.
+
+# -----------------------------------------------------------------------------
+# Core Setup - Register WAF as a RequestFilter
+# -----------------------------------------------------------------------------
+
+Injector:
+  # Register the WAF request filter via Injector
+  WafRequestFilter:
+    class: WafRequestFilter
+
+  # Register into the RequestProcessor filter chain
+  RequestProcessor:
+    properties:
+      filters:
+        - '%$WafRequestFilter'
+
+  # Storage service (singleton)
+  WafStorageService:
+    class: WafStorageService
+
+  # Blocklist service (singleton)
+  WafIpBlocklistService:
+    class: WafIpBlocklistService
+
+# -----------------------------------------------------------------------------
+# Request Filter Configuration
+# -----------------------------------------------------------------------------
+
+WafRequestFilter:
+  # Master switch - set to false to disable all WAF checks
+  enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Rate Limiting (Hard Limit)
+  # ---------------------------------------------------------------------------
+  # Blocks requests completely when limit is exceeded.
+  # Returns HTTP 429 Too Many Requests.
+  rate_limit_enabled: true
+  rate_limit_requests: 100      # Max requests per IP per window
+  rate_limit_window: 60         # Window duration in seconds
+
+  # ---------------------------------------------------------------------------
+  # Soft Rate Limiting (Progressive Delays)
+  # ---------------------------------------------------------------------------
+  # Slows down requests as they approach the hard limit.
+  # Discourages bots while allowing legitimate burst traffic.
+  #
+  # Example with defaults (threshold 50%, max_delay 3000ms, limit 100):
+  #   50 requests  ->  0ms delay (at threshold)
+  #   75 requests  ->  1500ms delay
+  #   99 requests  ->  2940ms delay
+  #   100+ requests -> blocked (hard limit)
+  soft_rate_limit_enabled: true
+  soft_rate_limit_threshold: 50   # % of hard limit where delays start
+  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds (3 seconds)
+
+  # ---------------------------------------------------------------------------
+  # Auto-Ban
+  # ---------------------------------------------------------------------------
+  # Automatically bans IPs after repeated violations.
+  # Violations include: blocklist hits, bad user-agents, rate limit exceeded.
+  auto_ban_enabled: true
+  ban_threshold: 10             # Number of violations before auto-ban
+  ban_duration: 3600            # Ban duration in seconds (1 hour)
+
+  # ---------------------------------------------------------------------------
+  # Logging
+  # ---------------------------------------------------------------------------
+  # Logs blocked requests to error_log in fail2ban-compatible format:
+  # [WAF] BLOCKED reason=blocked_pattern ip=1.2.3.4 uri="/wp-admin/"
+  log_blocked_requests: true
+
+  # ---------------------------------------------------------------------------
+  # Error Pages
+  # ---------------------------------------------------------------------------
+  # Use styled ErrorPage for rate limit (429) responses.
+  # Creates friendlier experience for legitimate users who hit rate limits.
+  # Falls back to plain text if ErrorPage not available.
+  use_styled_error_pages: true
+
+  # ---------------------------------------------------------------------------
+  # IP Whitelist
+  # ---------------------------------------------------------------------------
+  # These IPs skip all WAF checks. Supports single IPs and CIDR notation.
+  # Can also be set via WAF_WHITELIST_IPS environment variable (comma-separated).
+  whitelisted_ips:
+    - '127.0.0.1'
+    - '::1'
+    # - '10.0.0.0/8'            # Internal network example
+
+  # ---------------------------------------------------------------------------
+  # User-Agent Whitelist (Regex Patterns)
+  # ---------------------------------------------------------------------------
+  # These user-agents skip the blocked_user_agents check.
+  # Useful for monitoring services and legitimate bots.
+  whitelisted_user_agents:
+    - '/ohdear\.app/i'          # OhDear monitoring
+    - '/googlebot/i'            # Google crawler
+    - '/bingbot/i'              # Bing crawler
+    - '/uptimerobot/i'          # UptimeRobot monitoring
+    - '/pingdom/i'              # Pingdom monitoring
+
+  # ---------------------------------------------------------------------------
+  # User-Agent Blocklist (Regex Patterns)
+  # ---------------------------------------------------------------------------
+  # Requests matching these patterns are blocked immediately.
+  blocked_user_agents:
+    - '/^$/i'                   # Empty user-agent (common in bots)
+    - '/sqlmap/i'               # SQL injection tool
+    - '/nikto/i'                # Vulnerability scanner
+    - '/nmap/i'                 # Network scanner
+    - '/masscan/i'              # Mass port scanner
+    - '/zgrab/i'                # Go-based scanner
+    - '/gobuster/i'             # Directory brute-forcer
+    - '/dirbuster/i'            # Directory brute-forcer
+    - '/wpscan/i'               # WordPress scanner
+
+# -----------------------------------------------------------------------------
+# Storage Configuration
+# -----------------------------------------------------------------------------
+
+WafStorageService:
+  # Storage mode - choose based on your needs:
+  #
+  # 'cache'    - Pure cache only
+  #              Fastest, but data lost on cache clear
+  #
+  # 'file'     - Cache + JSON files in TEMP_FOLDER
+  #              No database queries, survives cache clear (DEFAULT)
+  #
+  # 'database' - Cache + database tables
+  #              Full persistence, enables DataObject queries
+  storage_mode: 'file'
+
+  # Filenames for 'file' mode (stored in TEMP_FOLDER, or absolute path if starts with /)
+  blocked_log_file: 'waf_blocked.jsonl'
+  bans_file: 'waf_bans.json'
+
+  # Max entries in blocked log before auto-rotation
+  max_log_entries: 1000
+
+  # High-load protection threshold
+  # When violations per minute exceed this, skip all persistence
+  # Set to 0 to disable high-load detection
+  high_load_threshold: 100
+
+# -----------------------------------------------------------------------------
+# IP Blocklist Service
+# -----------------------------------------------------------------------------
+
+WafIpBlocklistService:
+  # Enable/disable blocklist checking
+  sync_enabled: true
+
+  # How long to cache the blocklist (seconds)
+  cache_duration: 3600          # 1 hour
+
+  # How long to cache per-IP lookup results (seconds)
+  ip_result_cache_duration: 60  # 1 minute
+
+  # ---------------------------------------------------------------------------
+  # Blocklist Sources
+  # ---------------------------------------------------------------------------
+  blocklist_sources:
+    # FireHOL Level 1 - aggregated list of most aggressive attackers
+    firehol_level1:
+      url: 'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset'
+      enabled: true
+      format: 'cidr'
+
+    # Binary Defense ban list - IPs attacking their honeypots
+    binarydefense:
+      url: 'https://www.binarydefense.com/banlist.txt'
+      enabled: true
+      format: 'ip'
+
+    # Spamhaus DROP (Don't Route Or Peer) - hijacked IP ranges
+    spamhaus_drop:
+      url: 'https://www.spamhaus.org/drop/drop.txt'
+      enabled: false
+      format: 'cidr_semicolon'
+
+  # Local blocklist file (optional)
+  local_blocklist_file: null
+
+# -----------------------------------------------------------------------------
+# QueuedJobs Integration (Optional)
+# -----------------------------------------------------------------------------
+
+---
+Name: silverstripe-waf-queuedjobs
+Only:
+  moduleexists: 'queuedjobs'
+---
+
+# Configure the sync job to run every 6 hours
+WafSyncBlocklistsJob:
+  reschedule_interval: 21600    # 6 hours in seconds
