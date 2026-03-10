@@ -26,6 +26,12 @@ class EarlyFilterTest extends TestCase
         '/.env', '/.git', '/.svn', '/.htpasswd', '/.htaccess',
         '/config.php', '/configuration.php',
 
+        // Env config variants (not caught by /.env)
+        'config.env', 'stripe.env', '/env.js', '/env.backup', '/__env.js',
+
+        // Build tool / framework dev probes
+        '/@vite/', '/.vite/', '/node_modules/', '/asset-manifest.json',
+
         // Database tools
         '/phpmyadmin', '/pma/', '/myadmin/', '/adminer',
 
@@ -119,6 +125,31 @@ class EarlyFilterTest extends TestCase
         $this->assertBlocked('/backup.zip');
         $this->assertBlocked('/site.backup');
         $this->assertBlocked('/db.old');
+    }
+
+    /**
+     * Test env config variant detection (files using .env as extension)
+     */
+    public function testBlocksEnvConfigVariants(): void
+    {
+        $this->assertBlocked('/config.env');
+        $this->assertBlocked('/stripe.env');
+        $this->assertBlocked('/env.js');
+        $this->assertBlocked('/__env.js');
+        $this->assertBlocked('/env.backup');
+        $this->assertBlocked('/app/config.env');
+        $this->assertBlocked('/assets/stripe.env');
+    }
+
+    /**
+     * Test build tool / framework dev probe detection
+     */
+    public function testBlocksBuildToolProbes(): void
+    {
+        $this->assertBlocked('/@vite/client');
+        $this->assertBlocked('/.vite/deps/react.js');
+        $this->assertBlocked('/node_modules/lodash/index.js');
+        $this->assertBlocked('/asset-manifest.json');
     }
 
     /**
