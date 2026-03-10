@@ -65,6 +65,32 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   soft_rate_limit_max_delay: 3000 # Max delay in milliseconds (3 seconds)
 
   # ---------------------------------------------------------------------------
+  # Privileged IPs (Elevated Rate Limits)
+  # ---------------------------------------------------------------------------
+  # IPs that still go through all security checks (bans, blocklist, user-agent)
+  # but receive an elevated rate limit via a configurable multiplier.
+  # Factor multiplies the base rate limit: Factor 2.0 with 100 req/min = 200 req/min.
+  #
+  # DB entries (managed via CMS admin) are merged with these config tiers.
+  # DB entries override config for the same IP.
+  #
+  # Tier-based format:
+  # privileged_tiers:
+  #   office:
+  #     factor: 3.0
+  #     ips:
+  #       - '10.0.0.0/8'
+  #       - '192.168.1.0/24'
+  #   monitoring:
+  #     factor: 5.0
+  #     ips:
+  #       - '203.0.113.50'
+  privileged_tiers: {}
+
+  # How long to cache the merged privileged IP list (seconds)
+  privileged_ip_cache_duration: 300
+
+  # ---------------------------------------------------------------------------
   # Auto-Ban
   # ---------------------------------------------------------------------------
   # Automatically bans IPs after repeated violations.
@@ -72,6 +98,15 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   auto_ban_enabled: true
   ban_threshold: 10             # Number of violations before auto-ban
   ban_duration: 3600            # Ban duration in seconds (1 hour)
+
+  # ---------------------------------------------------------------------------
+  # Early Filter Banning (self-contained fail2ban alternative)
+  # ---------------------------------------------------------------------------
+  # When enabled, the early filter (pre-framework) tracks violations per IP
+  # using lightweight files and bans repeat offenders for all URLs.
+  # Uses ban_threshold and ban_duration from above.
+  # Can also be toggled via WAF_EARLY_BAN env var (true/false).
+  early_ban_enabled: true
 
   # ---------------------------------------------------------------------------
   # Logging
@@ -246,6 +281,19 @@ Restruct\SilverStripe\Waf\EarlyFilter:
     - '/LocalSettings.php'
     - '/web.config'
 
+    # Env config variants (not caught by /.env — .env as file extension)
+    - 'config.env'
+    - 'stripe.env'
+    - '/env.js'
+    - '/env.backup'
+    - '/__env.js'
+
+    # Build tool / framework dev probes
+    - '/@vite/'
+    - '/.vite/'
+    - '/node_modules/'
+    - '/asset-manifest.json'
+
     # Other CMS admin paths
     - '/administrator/index.php'
     - '/phpmyadmin'
@@ -266,6 +314,22 @@ Restruct\SilverStripe\Waf\EarlyFilter:
   # Short PHP files that are legitimate (won't be blocked)
   legitimate_php_files:
     - '/index.php'
+
+# -----------------------------------------------------------------------------
+# ModelAdmin Guard (Optional Extension)
+# -----------------------------------------------------------------------------
+# Prevents ModelAdmin from throwing errors on invalid ModelClass requests.
+# Scanners probe admin URLs with garbage paths, causing PHP errors.
+# This intercepts them before init() and returns 404 instead.
+#
+# Enable by uncommenting the extension below:
+# SilverStripe\Admin\ModelAdmin:
+#   extensions:
+#     - Restruct\SilverStripe\Waf\Extensions\WafModelAdminExtension
+
+# Return a JS fork bomb in the response (wastes scanner resources)
+Restruct\SilverStripe\Waf\Extensions\WafModelAdminExtension:
+  forkbomb: true
 
 # -----------------------------------------------------------------------------
 # QueuedJobs Integration (Optional)

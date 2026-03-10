@@ -5,12 +5,14 @@ PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability sc
 ## Features
 
 - **Early PHP Filter** - Blocks requests before Silverstripe loads (minimal overhead)
+- **Early Filter Banning** - Self-contained fail2ban alternative, bans repeat offenders at the PHP level
 - **Pattern-based blocking** - WordPress probes, webshells, config file access, path traversal
 - **IP Blocklists** - Auto-sync from threat intelligence feeds (FireHOL, Binary Defense)
 - **Rate Limiting** - Hard limits with soft progressive delays
+- **Privileged IPs** - Elevated rate limits for trusted IPs (still subject to all security checks)
 - **Auto-banning** - Automatically ban IPs after repeated violations
 - **Fail2ban Integration** - Log format compatible with fail2ban filters
-- **CMS Admin** - View blocked requests and manage bans (no database required)
+- **CMS Admin** - View blocked requests, manage bans and privileged IPs
 - **QueuedJobs Support** - Auto-schedules blocklist sync if module is installed
 
 ## Requirements
@@ -46,6 +48,40 @@ use SilverStripe\Core\CoreKernel;
 ```
 
 **Why before `use` statements?** The `use` statements are just namespace aliases (resolved at compile time), so the practical difference is minimal. However, placing the WAF filter first makes the security-first intent clear and ensures blocked requests parse the absolute minimum PHP before exiting.
+
+### Early Filter Banning (Self-Contained Fail2ban Alternative)
+
+When enabled (default), the early filter tracks violations per IP using lightweight files. After a configurable threshold (default: 10 violations), the IP is banned for **all URLs** — not just pattern matches. This stops scanners that fire bursts of probes in seconds, without needing fail2ban or any background job.
+
+**How it works:**
+
+1. Scanner hits `/wp-admin` → 403 + violation count incremented
+2. Scanner hits `/wp-login`, `/.env`, etc. → more violations
+3. After 10 violations → IP banned at the PHP level
+4. All subsequent requests from that IP → instant 403 (before pattern matching)
+
+**Performance impact:**
+
+| Scenario | Cost |
+|----------|------|
+| Feature disabled | 0ms |
+| Normal traffic (not banned) | ~0.01ms (one `file_exists` check) |
+| Banned IP | ~0.02ms (read 20-byte file) |
+| Tracking violation (bad traffic only) | ~0.1ms (read+write per-IP file) |
+
+**Configuration** uses the same `ban_threshold` and `ban_duration` values as the middleware auto-ban (set via YAML config). The middleware writes these to a shared config file that the early filter reads.
+
+```yaml
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  early_ban_enabled: true   # Toggle early filter banning
+  ban_threshold: 10         # Shared: violations before ban
+  ban_duration: 3600        # Shared: ban duration in seconds
+```
+
+Disable via environment variable (useful for debugging):
+```bash
+WAF_EARLY_BAN=false
+```
 
 ## Performance & Resource Footprint
 
@@ -183,6 +219,37 @@ Or via environment variable:
 WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8,10.0.0.0/8"
 ```
 
+### Privileged IPs (Elevated Rate Limits)
+
+Unlike whitelisted IPs (which skip ALL checks), privileged IPs still go through all security checks (bans, blocklist, user-agent) but receive an elevated rate limit via a configurable multiplier.
+
+**Example:** With a base limit of 100 req/min and a factor of 3.0, a privileged IP gets 300 req/min.
+
+**Via CMS Admin:** Manage privileged IPs in the WAF admin panel under the "Privileged IPs" tab. Supports single IPs, CIDR ranges, and tier grouping.
+
+**Via YAML config:**
+
+```yaml
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  privileged_tiers:
+    office:
+      factor: 3.0
+      ips:
+        - '10.0.0.0/8'
+        - '192.168.1.0/24'
+    monitoring:
+      factor: 5.0
+      ips:
+        - '203.0.113.50'
+
+  # Cache duration for merged privileged IP list (seconds)
+  privileged_ip_cache_duration: 300
+```
+
+DB entries (CMS admin) and YAML config tiers are merged at runtime. DB entries override config for the same IP.
+
+**TTFB impact:** Zero for normal traffic. The privileged IP lookup is deferred until a request count reaches the base soft-rate-limit threshold (~99% of requests never trigger it).
+
 ### User-Agent Whitelist
 
 Monitoring services and legitimate bots can be whitelisted by user-agent pattern (regex):
@@ -271,7 +338,10 @@ The WAF logs in a fail2ban-compatible format:
 
 ```
 [WAF] BLOCKED reason=blocked_pattern ip=1.2.3.4 uri="/wp-admin/"
+[WAF] EARLY_BAN ip=1.2.3.4 violations=10 duration=3600
 ```
+
+> **Note:** The built-in [early filter banning](#early-filter-banning-self-contained-fail2ban-alternative) provides a self-contained PHP-level alternative to fail2ban. Use fail2ban when you want firewall-level blocking (more efficient for high-volume attacks, blocks before PHP even starts).
 
 ### Fail2ban Filter
 
@@ -280,6 +350,7 @@ Create `/etc/fail2ban/filter.d/silverstripe-waf.conf`:
 ```ini
 [Definition]
 failregex = \[WAF\] BLOCKED .* ip=<HOST>
+            \[WAF\] VIOLATION .* ip=<HOST>
 ignoreregex =
 ```
 
@@ -297,6 +368,62 @@ maxretry = 5
 findtime = 300
 bantime = 3600
 ```
+
+### Setting up Fail2ban on Laravel Forge
+
+Forge servers don't include fail2ban by default. Here's how to set it up:
+
+**1. Install fail2ban:**
+
+```bash
+sudo apt-get update && sudo apt-get install -y fail2ban
+```
+
+**2. Find your PHP error log path:**
+
+```bash
+# For Nginx + PHP-FPM (Forge default):
+# Check your PHP-FPM pool config for the error_log setting
+grep -r "error_log" /etc/php/*/fpm/pool.d/
+# Common paths:
+#   /var/log/php-fpm/error.log
+#   /var/log/php8.3-fpm.log
+#   /home/forge/.forge/php-errors.log (Forge custom)
+
+# Or check where PHP actually writes errors:
+php -i | grep error_log
+```
+
+**3. Create the filter and jail** (as shown above), using the correct `logpath`.
+
+**4. Start and enable fail2ban:**
+
+```bash
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
+```
+
+**5. Verify it's working:**
+
+```bash
+# Check jail status
+sudo fail2ban-client status silverstripe-waf
+
+# Watch bans in real-time
+sudo tail -f /var/log/fail2ban.log
+```
+
+**6. Test with a probe** (from a different IP or be ready to unban yourself):
+
+```bash
+# Trigger a few blocks
+for i in {1..6}; do curl -s -o /dev/null -w "%{http_code}\n" https://yoursite.com/wp-admin; done
+
+# Check if the IP was picked up
+sudo fail2ban-client status silverstripe-waf
+```
+
+> **Tip:** On Forge, if PHP errors go to the site-specific Nginx error log (`/var/log/nginx/yoursite.com-error.log`), use that as the `logpath`. The WAF uses `error_log()` which follows PHP's configured error log destination.
 
 ## Blocked Patterns
 
@@ -362,6 +489,9 @@ WAF_ENABLED=false
 
 # Disable early filter only
 WAF_EARLY_FILTER_DISABLED=true
+
+# Disable early filter banning (self-contained fail2ban alternative)
+WAF_EARLY_BAN=false
 
 # Whitelist IPs
 WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8"
