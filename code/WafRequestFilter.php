@@ -54,6 +54,13 @@ class WafRequestFilter extends SS_Object implements RequestFilter
     // Blocklists
     private static $blocked_user_agents = array();
 
+    // Privileged IPs (elevated rate limits)
+    private static $privileged_tiers = array();
+    private static $privileged_ip_cache_duration = 300;
+
+    // Early filter banning (self-contained fail2ban alternative)
+    private static $early_ban_enabled = true;
+
     // Error pages - use styled ErrorPage for rate limit responses
     private static $use_styled_error_pages = true;
 
@@ -75,6 +82,9 @@ class WafRequestFilter extends SS_Object implements RequestFilter
         if (!$this->config()->get('enabled')) {
             return true;
         }
+
+        // Write config file for the early filter (once per hour, lightweight)
+        $this->writeEarlyFilterConfig();
 
         $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '0.0.0.0';
         $userAgent = $request->getHeader('User-Agent');
@@ -115,17 +125,31 @@ class WafRequestFilter extends SS_Object implements RequestFilter
         if ($this->config()->get('rate_limit_enabled')) {
             $requestCount = $this->getRequestCount($ip);
             $hardLimit = $this->config()->get('rate_limit_requests');
+            $effectiveLimit = $hardLimit;
 
-            // Hard rate limit
-            if ($requestCount >= $hardLimit) {
+            # Lazy: only look up privileged factor when approaching the base soft threshold
+            # For 99%+ of requests (normal traffic under threshold), this adds zero overhead.
+            # Since baseSoftThreshold <= hardLimit, this also covers the hard limit edge case.
+            $softPct = $this->config()->get('soft_rate_limit_threshold');
+            $baseSoftThreshold = (int) ($hardLimit * $softPct / 100);
+
+            if ($requestCount >= $baseSoftThreshold) {
+                $factor = $this->getPrivilegedIpFactor($ip);
+                if ($factor !== null) {
+                    $effectiveLimit = (int) ceil($hardLimit * $factor);
+                }
+            }
+
+            // Hard rate limit (uses effective limit — scales with factor)
+            if ($requestCount >= $effectiveLimit) {
                 $this->recordViolation($ip, 'rate_limit');
                 $this->sendTooManyRequests($request, $ip, $uri, $userAgent);
                 return false;
             }
 
-            // Soft rate limiting (progressive delay)
+            // Soft rate limiting (progressive delay, scales with effective limit)
             if ($this->config()->get('soft_rate_limit_enabled')) {
-                $this->applySoftRateLimit($requestCount, $hardLimit);
+                $this->applySoftRateLimit($requestCount, $effectiveLimit);
             }
 
             $this->recordRequest($ip);
@@ -359,6 +383,94 @@ class WafRequestFilter extends SS_Object implements RequestFilter
     }
 
     // ========================================================================
+    // Privileged IP Lookup
+    // ========================================================================
+
+    /**
+     * Get the rate limit factor for a privileged IP
+     *
+     * @param string $ip
+     * @return float|null Factor if privileged, null otherwise
+     */
+    protected function getPrivilegedIpFactor($ip)
+    {
+        $entries = $this->getPrivilegedIpEntries();
+
+        if (empty($entries)) {
+            return null;
+        }
+
+        # Check exact IP match first (O(1) hash lookup)
+        if (isset($entries[$ip])) {
+            return $entries[$ip];
+        }
+
+        # Then iterate CIDR entries (O(n), n is typically small)
+        foreach ($entries as $entry => $factor) {
+            if (strpos($entry, '/') !== false && $this->ipMatchesCidr($ip, $entry)) {
+                return $factor;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Get merged privileged IP entries from config + DB
+     *
+     * Cached for configurable duration (default 300s).
+     * DB entries override config for the same IP.
+     *
+     * @return array Map of IP/CIDR => factor
+     */
+    protected function getPrivilegedIpEntries()
+    {
+        $cache = $this->getCache();
+        $cacheKey = 'privileged_ips_merged';
+
+        $cached = $cache->load($cacheKey);
+        if ($cached !== false) {
+            $decoded = json_decode($cached, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        $entries = array();
+
+        # Flatten config tiers into [ip => factor] map
+        $tiers = $this->config()->get('privileged_tiers');
+        if (!is_array($tiers)) {
+            $tiers = array();
+        }
+        foreach ($tiers as $tierName => $tierConfig) {
+            $factor = (float) (isset($tierConfig['factor']) ? $tierConfig['factor'] : 2.0);
+            $ips = isset($tierConfig['ips']) ? $tierConfig['ips'] : array();
+            foreach ($ips as $ip) {
+                $entries[$ip] = $factor;
+            }
+        }
+
+        # Merge DB entries (override config for same IP)
+        try {
+            if (class_exists('WafPrivilegedIp')) {
+                $dbEntries = WafPrivilegedIp::get()->filter('IsActive', true);
+                foreach ($dbEntries as $entry) {
+                    $entries[$entry->IpAddress] = (float) $entry->Factor;
+                }
+            }
+        } catch (Exception $e) {
+            # DB not available yet (e.g. during dev/build) — use config entries only
+        }
+
+        # Cache the merged result (JSON-encode for Zend_Cache string storage)
+        $ttl = $this->config()->get('privileged_ip_cache_duration');
+        $cache->save(json_encode($entries), $cacheKey, array(), $ttl);
+
+        return $entries;
+    }
+
+    // ========================================================================
     // Violation & Banning
     // ========================================================================
 
@@ -528,5 +640,41 @@ class WafRequestFilter extends SS_Object implements RequestFilter
     protected function getStorageService()
     {
         return Injector::inst()->get('WafStorageService');
+    }
+
+    /**
+     * Write config values to a shared JSON file for the early filter
+     *
+     * The early filter runs before the framework loads, so it can't read YAML config.
+     * This bridges the gap: the middleware writes ban_threshold, ban_duration, and
+     * early_ban_enabled to a file that both layers can access.
+     *
+     * Writes at most once per hour to minimize overhead.
+     */
+    protected function writeEarlyFilterConfig()
+    {
+        # Compute the same data dir as the early filter uses
+        # Early filter: __DIR__ = module root
+        # Request filter: __DIR__ = code/, so dirname(__DIR__) = module root
+        $moduleRoot = dirname(__DIR__);
+        $wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5($moduleRoot), 0, 8);
+        $configFile = $wafDataDir . '/config.json';
+
+        # Only write if file doesn't exist or is older than 1 hour
+        if (file_exists($configFile) && @filemtime($configFile) > time() - 3600) {
+            return;
+        }
+
+        if (!is_dir($wafDataDir)) {
+            @mkdir($wafDataDir, 0755, true);
+        }
+
+        $config = array(
+            'early_ban_enabled' => $this->config()->get('early_ban_enabled'),
+            'ban_threshold' => $this->config()->get('ban_threshold'),
+            'ban_duration' => $this->config()->get('ban_duration'),
+        );
+
+        @file_put_contents($configFile, json_encode($config));
     }
 }

@@ -13,6 +13,7 @@
  * Features:
  * - Pattern-based URL blocking (WordPress, webshells, config files, scanners)
  * - Random PHP probe detection
+ * - Self-contained IP banning for repeat offenders (optional, no framework needed)
  * - Fail2ban-compatible logging
  * - Minimal overhead (no framework dependencies)
  */
@@ -31,6 +32,39 @@ $config = [
     'detect_path_probes' => getenv('WAF_DETECT_PATH_PROBES') !== 'false',
     'detect_php_probes'  => getenv('WAF_DETECT_PHP_PROBES') !== 'false',
 ];
+
+// ============================================================================
+// EARLY BANNING (self-contained fail2ban alternative)
+// ============================================================================
+// Tracks violations per IP using lightweight per-IP files. After threshold
+// violations, bans the IP for all URLs (not just pattern matches).
+//
+// Config is read from a shared JSON file written by the middleware (from YAML).
+// Falls back to defaults matching the YAML config if the file doesn't exist yet.
+//
+// Toggle via env: WAF_EARLY_BAN=false to disable, WAF_EARLY_BAN=true to enable.
+
+// Data directory — unique per project, derived from module path
+$wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5(__DIR__), 0, 8);
+
+// Read config from shared file (written by middleware from YAML config values)
+$earlyBanConfig = ['enabled' => true, 'threshold' => 10, 'duration' => 3600];
+$wafConfigFile = $wafDataDir . '/config.json';
+if (file_exists($wafConfigFile)) {
+    $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
+    if (is_array($loadedConfig)) {
+        $earlyBanConfig['enabled'] = isset($loadedConfig['early_ban_enabled']) ? $loadedConfig['early_ban_enabled'] : true;
+        $earlyBanConfig['threshold'] = (int) (isset($loadedConfig['ban_threshold']) ? $loadedConfig['ban_threshold'] : 10);
+        $earlyBanConfig['duration'] = (int) (isset($loadedConfig['ban_duration']) ? $loadedConfig['ban_duration'] : 3600);
+    }
+}
+
+// Env var override for enable/disable
+if (getenv('WAF_EARLY_BAN') === 'false') {
+    $earlyBanConfig['enabled'] = false;
+} elseif (getenv('WAF_EARLY_BAN') === 'true') {
+    $earlyBanConfig['enabled'] = true;
+}
 
 // ============================================================================
 // BLOCKED PATH PATTERNS (organized by category)
@@ -81,6 +115,15 @@ $blockedPaths = [
     '/.travis.yml', '/.gitlab-ci.yml', '/Jenkinsfile',
     '/phpunit.xml', '/phpcs.xml', '/.phpcs.xml',
     '/codeception.yml', '/behat.yml',
+
+    // Env config variants (not caught by /.env — .env as file extension)
+    'config.env', 'stripe.env',
+    '/env.js', '/env.backup', '/__env.js',
+
+    // Build tool / framework dev probes
+    '/@vite/', '/.vite/',
+    '/node_modules/',
+    '/asset-manifest.json',
 
     // Database tools
     '/phpmyadmin', '/pma/', '/myadmin/', '/mysql/',
@@ -149,6 +192,20 @@ if (in_array($ip, $whitelistedIps, true)) {
     return;
 }
 
+// 0. Early ban check — blocks ALL URLs from repeat offenders
+//    Cost: one file_exists (~0.01ms) when enabled, 0ms when disabled
+if ($earlyBanConfig['enabled'] && is_dir($wafDataDir)) {
+    $banFile = $wafDataDir . '/ban_' . md5($ip);
+    if (file_exists($banFile)) {
+        $expires = (int) @file_get_contents($banFile);
+        if ($expires > time()) {
+            wafLogAndBlock('early_ban', 'Repeat offender', $ip, $uri, $userAgent);
+        }
+        // Expired — clean up
+        @unlink($banFile);
+    }
+}
+
 // 1. Path-based blocking
 if ($config['detect_path_probes']) {
     $uriLower = strtolower($uri);
@@ -195,6 +252,11 @@ function wafLogAndBlock($reason, $pattern, $ip, $uri, $userAgent)
         $safeUserAgent
     ));
 
+    // Track violation for early banning (skip for ban blocks to avoid double-counting)
+    if ($reason !== 'early_ban') {
+        wafTrackViolation($ip);
+    }
+
     // Return 403 Forbidden
     http_response_code(403);
 
@@ -204,4 +266,88 @@ function wafLogAndBlock($reason, $pattern, $ip, $uri, $userAgent)
     header('Cache-Control: no-store, no-cache, must-revalidate');
 
     exit('Forbidden');
+}
+
+/**
+ * Track a violation and ban IP if threshold reached
+ *
+ * Uses per-IP files to avoid cross-IP contention.
+ * File format: "count:first_seen_timestamp"
+ */
+function wafTrackViolation($ip)
+{
+    global $earlyBanConfig, $wafDataDir;
+
+    if (!$earlyBanConfig['enabled']) {
+        return;
+    }
+
+    if (!is_dir($wafDataDir)) {
+        @mkdir($wafDataDir, 0755, true);
+    }
+
+    $violFile = $wafDataDir . '/viol_' . md5($ip);
+
+    // Read current violation data
+    $count = 0;
+    $firstSeen = time();
+    $data = @file_get_contents($violFile);
+
+    if ($data !== false) {
+        $parts = explode(':', $data, 2);
+        $count = (int) (isset($parts[0]) ? $parts[0] : 0);
+        $firstSeen = (int) (isset($parts[1]) ? $parts[1] : time());
+
+        // Reset if violation window expired (older than ban duration)
+        if ($firstSeen < time() - $earlyBanConfig['duration']) {
+            $count = 0;
+            $firstSeen = time();
+        }
+    }
+
+    $count++;
+
+    // Ban if threshold reached
+    if ($count >= $earlyBanConfig['threshold']) {
+        $banFile = $wafDataDir . '/ban_' . md5($ip);
+        @file_put_contents($banFile, (string) (time() + $earlyBanConfig['duration']));
+        @unlink($violFile);
+
+        error_log(sprintf(
+            '[WAF] EARLY_BAN ip=%s violations=%d duration=%d',
+            $ip,
+            $count,
+            $earlyBanConfig['duration']
+        ));
+    } else {
+        @file_put_contents($violFile, $count . ':' . $firstSeen);
+    }
+
+    // Occasional cleanup of expired files (1 in 100 chance)
+    if (mt_rand(1, 100) === 1) {
+        wafCleanupExpired($wafDataDir, $earlyBanConfig['duration']);
+    }
+}
+
+/**
+ * Clean up expired ban and violation files
+ */
+function wafCleanupExpired($dir, $maxAge)
+{
+    $cutoff = time() - $maxAge;
+    $files = @scandir($dir);
+    if (!$files) {
+        return;
+    }
+
+    foreach ($files as $file) {
+        // Skip dot files and the config file (written by middleware)
+        if ($file[0] === '.' || $file === 'config.json') {
+            continue;
+        }
+        $path = $dir . '/' . $file;
+        if (@filemtime($path) < $cutoff) {
+            @unlink($path);
+        }
+    }
 }

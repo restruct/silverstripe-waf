@@ -533,6 +533,21 @@ class WafStorageService extends SS_Object
     }
 
     // ========================================================================
+    // Privileged IP Cache
+    // ========================================================================
+
+    /**
+     * Invalidate the cached merged privileged IP list
+     *
+     * Called by WafPrivilegedIp::onAfterWrite() and onAfterDelete()
+     * to ensure changes take effect immediately.
+     */
+    public function invalidatePrivilegedIpCache()
+    {
+        $this->getCache()->remove('privileged_ips_merged');
+    }
+
+    // ========================================================================
     // Cleanup
     // ========================================================================
 

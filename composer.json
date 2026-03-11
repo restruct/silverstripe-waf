@@ -2,7 +2,7 @@
     "name": "restruct/silverstripe-waf",
     "description": "PHP-level Web Application Firewall for Silverstripe 3 - blocks vulnerability scanners, bad bots, and malicious IPs",
     "type": "silverstripe-module",
-    "license": "BSD-3-Clause",
+    "license": "MIT",
     "keywords": [
         "silverstripe",
         "security",

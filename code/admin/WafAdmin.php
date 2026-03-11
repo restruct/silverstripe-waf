@@ -38,6 +38,11 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
                     $this->getBannedIpsGrid(),
                     $this->getManualBanFields()
                 ),
+                Tab::create('PrivilegedIPs', 'Privileged IPs',
+                    $this->getPrivilegedIpsInfoField(),
+                    $this->getPrivilegedIpsGrid(),
+                    $this->getPrivilegedIpsConfigField()
+                ),
                 Tab::create('Blocklist', 'IP Blocklist',
                     $this->getBlocklistStatsField()
                 )
@@ -212,6 +217,82 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
         </div>
         <button type=\"submit\" class=\"btn btn-warning\">Ban IP</button>
     </form>
+</div>
+        ");
+    }
+
+    /**
+     * @return LiteralField
+     */
+    protected function getPrivilegedIpsInfoField()
+    {
+        $baseLimit = WafRequestFilter::config()->get('rate_limit_requests');
+        $window = WafRequestFilter::config()->get('rate_limit_window');
+        $exampleDouble = $baseLimit * 2;
+
+        return LiteralField::create('PrivilegedIpsInfo', "
+<div style=\"background: #e8f5e9; padding: 15px; margin-bottom: 20px; border-radius: 4px; border: 1px solid #a5d6a7;\">
+    <h4 style=\"margin-top: 0;\">Privileged IPs</h4>
+    <p style=\"margin-bottom: 5px;\">
+        Privileged IPs still go through <strong>all security checks</strong> (bans, blocklist, user-agent)
+        but receive an elevated rate limit via a configurable multiplier.
+    </p>
+    <p style=\"margin-bottom: 0;\">
+        <strong>Base rate limit:</strong> {$baseLimit} requests per {$window} seconds.
+        A Factor of <strong>2.0</strong> = {$baseLimit} &times; 2 = <strong>{$exampleDouble}</strong> effective requests.
+    </p>
+</div>
+        ");
+    }
+
+    /**
+     * @return GridField
+     */
+    protected function getPrivilegedIpsGrid()
+    {
+        return GridField::create(
+            'PrivilegedIPs',
+            'Privileged IPs (Database)',
+            WafPrivilegedIp::get(),
+            GridFieldConfig_RecordEditor::create()
+        );
+    }
+
+    /**
+     * @return LiteralField
+     */
+    protected function getPrivilegedIpsConfigField()
+    {
+        $tiers = WafRequestFilter::config()->get('privileged_tiers');
+        if (!is_array($tiers)) {
+            $tiers = array();
+        }
+
+        if (empty($tiers)) {
+            return LiteralField::create('PrivilegedIpsConfig', "
+<div style=\"background: #f5f5f5; padding: 15px; margin-top: 20px; border-radius: 4px;\">
+    <h4 style=\"margin-top: 0;\">YAML Config Tiers</h4>
+    <p style=\"margin-bottom: 0; color: #666;\">No tiers defined in YAML config. Use the grid above to manage privileged IPs, or define tiers in <code>_config/config.yml</code>.</p>
+</div>
+            ");
+        }
+
+        $tierRows = '';
+        foreach ($tiers as $tierName => $tierConfig) {
+            $factor = isset($tierConfig['factor']) ? $tierConfig['factor'] : 2.0;
+            $ips = isset($tierConfig['ips']) ? $tierConfig['ips'] : array();
+            $ipList = implode(', ', $ips);
+            $tierRows .= "<tr><td><strong>{$tierName}</strong></td><td>{$factor}</td><td style='font-size: 12px;'>{$ipList}</td></tr>";
+        }
+
+        return LiteralField::create('PrivilegedIpsConfig', "
+<div style=\"background: #f5f5f5; padding: 15px; margin-top: 20px; border-radius: 4px;\">
+    <h4 style=\"margin-top: 0;\">YAML Config Tiers <span style=\"font-weight: normal; color: #666;\">(read-only)</span></h4>
+    <p style=\"font-size: 12px; color: #666;\">These tiers are defined in YAML config and merged with database entries at runtime. DB entries override config for the same IP.</p>
+    <table class=\"table\" style=\"width: 100%;\">
+        <thead><tr><th>Tier</th><th>Factor</th><th>IPs</th></tr></thead>
+        <tbody>{$tierRows}</tbody>
+    </table>
 </div>
         ");
     }
