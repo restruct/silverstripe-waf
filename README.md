@@ -68,9 +68,9 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
 
 Access via the **WAF** menu item in the CMS:
 
-- **Blocked Requests** — View blocked request log (most recent first)
+- **Blocked Requests** — View blocked request log with reason, detail, URI, and user agent
 - **Banned IPs** — Manage banned IPs (add/remove bans)
-- **Privileged IPs** — Manage elevated rate limits for trusted IPs
+- **Privileged IPs** — Manage elevated rate limits for trusted IPs (protected from auto-ban)
 - **Blocklist Status** — View sync status and source health
 
 Works in all storage modes — no database required for `file` mode.

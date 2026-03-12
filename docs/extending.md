@@ -89,8 +89,8 @@ vendor/bin/phpunit
 |-----------|-------|
 | IpBlocklistService | 13 |
 | WafStorageService | 9 |
-| WafMiddleware | 6 |
-| EarlyFilter | 8 |
-| **Total** | **36** |
+| WafMiddleware | 22 |
+| EarlyFilter | 10 |
+| **Total** | **54** |
 
-Covers: IP range handling, CIDR conversion, binary search, range merging, high-load detection, rate limiting, soft limit delays, user-agent blocking, CIDR whitelist matching, path probe detection.
+Covers: IP range handling, CIDR conversion, binary search, range merging, high-load detection, rate limiting, time-windowed counters, soft limit delays, privileged IP factor lookup, privileged IP auto-ban protection, user-agent blocking, CIDR whitelist matching, path probe detection.

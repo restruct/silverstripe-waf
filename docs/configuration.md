@@ -32,6 +32,8 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   rate_limit_window: 60       # Window in seconds
 ```
 
+The rate counter uses **fixed time windows** — each window period starts a fresh counter that expires independently. This means a crawler sending 2 requests/second will count ~120 requests per 60-second window, always resetting at the window boundary.
+
 ### Soft Limit (Progressive Delays)
 
 Slows down requests as they approach the hard limit. Discourages bots while allowing legitimate burst traffic.
@@ -142,11 +144,14 @@ The default rate limit is **100 requests/minute**. Crawlers exceeding this will:
 1. Receive 429 (Too Many Requests) responses
 2. After repeated violations (default: 10), get auto-banned for 1 hour (403 Forbidden)
 
+**For known crawlers**, add their IP as a **privileged IP** with an appropriate factor (e.g. 3.0 = 300 req/min). Privileged IPs that exceed the elevated limit get 429 responses but are **never auto-banned** for rate limits.
+
 **Recommended crawler settings:**
 - Max 1 request/second (~60/minute) to stay safely under the limit
-- Or whitelist the crawler's IP for full bypass
+- Or add as privileged IP for elevated limits without ban risk
+- Or whitelist the crawler's IP for full bypass (skips all checks)
 
-For example, OhDear's default "2 concurrent, 250ms" setting equals ~480 requests/minute — far exceeding the limit. Configure slower crawling or whitelist OhDear's IP addresses.
+For example, OhDear's default "2 concurrent, 250ms" setting equals ~480 requests/minute — far exceeding the limit. Configure slower crawling, add as privileged IP, or whitelist OhDear's IP addresses.
 
 ## Auto-Ban
 
@@ -158,6 +163,14 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   ban_threshold: 10       # Violations before auto-ban
   ban_duration: 3600      # Ban duration in seconds (1 hour)
 ```
+
+### Privileged IP Protection
+
+Privileged IPs are protected from auto-ban for rate limit violations. When a privileged IP exceeds the rate limit, it receives a 429 response but violations are **not counted** toward the ban threshold. This prevents known partners (SEO crawlers, monitoring tools) from being accidentally banned during traffic bursts.
+
+Security violations (`blocklist`, `bad_useragent`) still count normally — privileged status only exempts rate limit bans.
+
+Additionally, if a privileged IP is currently banned (e.g. it was banned before being marked privileged), the ban is automatically lifted on the next request.
 
 ## Blocklist Sources
 

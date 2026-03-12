@@ -32,7 +32,7 @@ The privileged IP lookup is **deferred** until the request count reaches the bas
 |----------|------|-------|
 | Blocklist download | ~72 KB | FireHOL Level 1 + Binary Defense, every 6h |
 | Cache: blocklist | ~500 KB | ~4,500 CIDRs stored as optimized ranges |
-| Cache: rate data | ~60 bytes/IP | Rate counters + violation counts |
+| Cache: rate data | ~60 bytes/IP/window | Rate counters (time-windowed) + violation counts |
 | Cache: total | ~1-2 MB | Under moderate load (10K unique IPs) |
 
 The module uses chunked cache storage (500 entries per chunk) to work within Memcached's 1MB item limit.

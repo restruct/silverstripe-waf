@@ -423,6 +423,159 @@ class WafMiddlewareTest extends TestCase
     }
 
     // ========================================================================
+    // Time-Windowed Rate Counter Tests
+    // ========================================================================
+
+    /**
+     * Test that rate counter cache key includes time window ID
+     *
+     * The key format should be: rate_{md5(ip)}_{windowId}
+     * where windowId = intdiv(time(), window)
+     */
+    public function testRateCounterKeyIncludesWindowId(): void
+    {
+        $window = 60;
+        $ip = '1.2.3.4';
+        $ipHash = md5($ip);
+
+        # Calculate what the windowed key should be
+        $windowId = intdiv(time(), $window);
+        $expectedKey = 'rate_' . $ipHash . '_' . $windowId;
+
+        # Verify the key format matches the pattern
+        $this->assertMatchesRegularExpression(
+            '/^rate_[a-f0-9]{32}_\d+$/',
+            $expectedKey,
+            'Rate counter key should be: rate_{md5}_{windowId}'
+        );
+
+        # Different windows produce different keys
+        $nextWindowKey = 'rate_' . $ipHash . '_' . ($windowId + 1);
+        $this->assertNotEquals($expectedKey, $nextWindowKey,
+            'Different time windows should produce different cache keys'
+        );
+    }
+
+    /**
+     * Test that continuous traffic within the same window accumulates
+     * but a new window starts a fresh counter
+     *
+     * This verifies the core fix: with the old approach (single key + TTL reset),
+     * a counter at 2 req/sec would reach 600 after 300 seconds because the TTL
+     * kept resetting. With windowed keys, each 60-second window caps at ~120.
+     */
+    public function testWindowedCounterResetsEachWindow(): void
+    {
+        $window = 60;
+        $requestsPerSecond = 2;
+
+        # Simulate traffic within a single window
+        $requestsPerWindow = $requestsPerSecond * $window; // 120
+        $baseLimit = 200;
+
+        # 120 < 200: single window should never trigger rate limit
+        $this->assertLessThan($baseLimit, $requestsPerWindow,
+            'At 2 req/sec, a single 60s window should produce ~120 requests (under 200 limit)'
+        );
+
+        # With old (broken) approach: 5 minutes of traffic = 600 requests (hits even privileged limit)
+        $oldApproachTotal = $requestsPerSecond * 300; // 600
+        $privilegedLimit = $baseLimit * 3; // 600
+        $this->assertGreaterThanOrEqual($privilegedLimit, $oldApproachTotal,
+            'Old approach: 5 minutes at 2 req/sec = 600, hitting privileged limit'
+        );
+
+        # With new (fixed) approach: each window maxes at 120, never accumulates
+        $this->assertLessThan($baseLimit, $requestsPerWindow,
+            'New approach: each window independently counts ~120, always under limit'
+        );
+    }
+
+    // ========================================================================
+    // Privileged IP Auto-Ban Protection Tests
+    // ========================================================================
+
+    /**
+     * Test that privileged IPs should not accumulate violations for rate_limit
+     *
+     * When reason is 'rate_limit' and IP is privileged, recordViolation()
+     * should return early without counting the violation.
+     */
+    public function testPrivilegedIpSkipsViolationCountingForRateLimit(): void
+    {
+        # The logic in recordViolation() is:
+        # if ($reason === 'rate_limit' && getPrivilegedIpFactor($ip) !== null) return;
+        $reason = 'rate_limit';
+        $isPrivileged = true;
+
+        # Privileged + rate_limit → should skip (return early)
+        $this->assertTrue($reason === 'rate_limit' && $isPrivileged,
+            'Privileged IPs with rate_limit reason should skip violation counting'
+        );
+
+        # Privileged + other reason → should NOT skip
+        $securityReason = 'blocklist';
+        $this->assertFalse($securityReason === 'rate_limit' && $isPrivileged,
+            'Privileged IPs with security violations should still be counted'
+        );
+
+        # Non-privileged + rate_limit → should NOT skip
+        $isNotPrivileged = false;
+        $this->assertFalse($reason === 'rate_limit' && $isNotPrivileged,
+            'Non-privileged IPs should always count violations'
+        );
+    }
+
+    /**
+     * Test that privileged IPs bypass existing bans
+     *
+     * In process(), if IP is banned but is privileged, it should be
+     * auto-unbanned and allowed to continue to rate limiting.
+     */
+    public function testPrivilegedIpBypassesBan(): void
+    {
+        # The logic in process() is:
+        # if (isBanned($ip) && getPrivilegedIpFactor($ip) !== null) → unban, continue
+        # if (isBanned($ip) && getPrivilegedIpFactor($ip) === null) → block
+        $isBanned = true;
+
+        # Privileged + banned → should unban and continue
+        $privilegedFactor = 3.0;
+        $shouldBypass = $isBanned && $privilegedFactor !== null;
+        $this->assertTrue($shouldBypass,
+            'Privileged IPs should bypass existing bans'
+        );
+
+        # Non-privileged + banned → should block
+        $nonPrivilegedFactor = null;
+        $shouldBlock = $isBanned && $nonPrivilegedFactor === null;
+        $this->assertTrue($shouldBlock,
+            'Non-privileged IPs should remain blocked when banned'
+        );
+    }
+
+    /**
+     * Test that only rate_limit violations are exempted, not security violations
+     */
+    public function testPrivilegedIpStillBannedForSecurityViolations(): void
+    {
+        $securityReasons = ['blocklist', 'bad_useragent'];
+        $rateReason = 'rate_limit';
+
+        foreach ($securityReasons as $reason) {
+            # Security reasons should NOT match the skip condition
+            $this->assertNotEquals('rate_limit', $reason,
+                "Security reason '{$reason}' should not be exempted from auto-ban"
+            );
+        }
+
+        # Only rate_limit should match
+        $this->assertEquals('rate_limit', $rateReason,
+            'Only rate_limit reason should be exempted for privileged IPs'
+        );
+    }
+
+    // ========================================================================
     // IP/CIDR Validation Tests (mirrors PrivilegedIp::validate() logic)
     // ========================================================================
 

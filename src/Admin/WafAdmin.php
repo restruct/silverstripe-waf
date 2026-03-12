@@ -78,10 +78,17 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
             'EditForm',
             $fields,
             $actions
-        );
+        )->setHTMLID('Form_EditForm');
+
+        # CMSTabSet renders tab panels only (no <ul> nav — that's in LeftAndMain_EditForm.ss header).
+        # The cms-tabset class on the form triggers Entwine to init jQuery UI Tabs,
+        # which styles the header <ul> with ui-tabs-nav classes.
+        if ($fields->hasTabSet()) {
+            $fields->findOrMakeTab('Root')->setTemplate('SilverStripe\\Forms\\CMSTabSet');
+        }
 
         $form->setTemplate($this->getTemplatesWithSuffix('_EditForm'));
-        $form->addExtraClass('cms-edit-form');
+        $form->addExtraClass('cms-tabset cms-edit-form');
         $form->setAttribute('data-pjax-fragment', 'CurrentForm');
 
         return $form;
@@ -163,7 +170,9 @@ HTML
             'Created' => 'Time',
             'IpAddress' => 'IP Address',
             'Reason' => 'Reason',
+            'Detail' => 'Detail',
             'Uri' => 'URI',
+            'UserAgent' => 'User Agent',
         ]);
 
         return GridField::create('BlockedRequests', 'Recent Blocked Requests', $data, $config);

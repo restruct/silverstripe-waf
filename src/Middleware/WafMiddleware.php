@@ -106,7 +106,12 @@ class WafMiddleware implements HTTPMiddleware
 
         // Check if IP is banned (cache or database)
         if ($this->isBanned($ip)) {
-            return $this->blocked($request, 'banned', 'IP is banned');
+            # Privileged IPs bypass bans — handles IPs banned before being marked privileged
+            if ($this->getPrivilegedIpFactor($ip) !== null) {
+                $this->getStorageService()->unbanIp($ip);
+            } else {
+                return $this->blocked($request, 'banned', 'IP is banned');
+            }
         }
 
         // Check IP against threat intelligence blocklists
@@ -266,7 +271,10 @@ class WafMiddleware implements HTTPMiddleware
     protected function getRequestCount(string $ip): int
     {
         $cache = $this->getCache();
-        $key = 'rate_' . md5($ip);
+        $window = $this->config()->get('rate_limit_window');
+        # Divide time into fixed windows — each window gets its own counter
+        $windowId = intdiv(time(), $window);
+        $key = 'rate_' . md5($ip) . '_' . $windowId;
         return (int) $cache->get($key);
     }
 
@@ -278,10 +286,13 @@ class WafMiddleware implements HTTPMiddleware
     protected function recordRequest(string $ip): void
     {
         $cache = $this->getCache();
-        $key = 'rate_' . md5($ip);
+        $window = $this->config()->get('rate_limit_window');
+        # Same windowed key as getRequestCount() — counter resets each window
+        $windowId = intdiv(time(), $window);
+        $key = 'rate_' . md5($ip) . '_' . $windowId;
         $count = (int) $cache->get($key);
-
-        $cache->set($key, $count + 1, $this->config()->get('rate_limit_window'));
+        # TTL = 2x window to ensure cleanup while avoiding premature expiry
+        $cache->set($key, $count + 1, $window * 2);
     }
 
     /**
@@ -425,6 +436,15 @@ class WafMiddleware implements HTTPMiddleware
 
         if (!$this->config()->get('auto_ban_enabled')) {
             return;
+        }
+
+        # Privileged IPs get 429 responses but should never be auto-banned for rate limits.
+        # Security violations (blocklist, bad_useragent) still ban normally.
+        if ($reason === 'rate_limit') {
+            $factor = $this->getPrivilegedIpFactor($ip);
+            if ($factor !== null) {
+                return;
+            }
         }
 
         $cache = $this->getCache();
