@@ -48,7 +48,7 @@ class WafMiddleware implements HTTPMiddleware
 
     // Rate limiting
     private static bool $rate_limit_enabled = true;
-    private static int $rate_limit_requests = 100;
+    private static int $rate_limit_requests = 150;
     private static int $rate_limit_window = 60;
 
     // Soft rate limiting (progressive delays before hard block)

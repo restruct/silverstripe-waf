@@ -28,7 +28,7 @@ Blocks requests completely when exceeded. Returns HTTP 429 Too Many Requests.
 
 ```yaml
 Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
-  rate_limit_requests: 100    # Max requests per IP per window
+  rate_limit_requests: 150    # Max requests per IP per window
   rate_limit_window: 60       # Window in seconds
 ```
 
@@ -44,16 +44,15 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   soft_rate_limit_max_delay: 3000 # Max delay in milliseconds
 ```
 
-**Behavior with default 100 req/min limit:**
+**Behavior with default 150 req/min limit:**
 
 | Requests | Delay |
 |----------|-------|
-| 50 (threshold) | 0ms |
-| 60 | 600ms |
-| 75 | 1500ms |
-| 90 | 2400ms |
-| 99 | 2940ms |
-| 100+ | Blocked (429) |
+| 75 (threshold) | 0ms |
+| 100 | 1000ms |
+| 130 | 2200ms |
+| 149 | 2960ms |
+| 150+ | Blocked (429) |
 
 ### 429 Error Page
 
@@ -93,7 +92,7 @@ WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8,10.0.0.0/8"
 
 Unlike whitelisted IPs (which skip ALL checks), privileged IPs still go through all security checks (bans, blocklist, user-agent) but receive an elevated rate limit via a configurable multiplier.
 
-**Example:** Base limit 100 req/min with factor 3.0 = 300 req/min effective limit.
+**Example:** Base limit 150 req/min with factor 2.5 = 375 req/min effective limit.
 
 ### Via CMS Admin
 
@@ -140,7 +139,7 @@ These skip the `blocked_user_agents` check only. Whitelisted crawlers are still 
 
 ## Crawlers & Monitoring Tools
 
-The default rate limit is **100 requests/minute**. Crawlers exceeding this will:
+The default rate limit is **150 requests/minute**. Crawlers exceeding this will:
 1. Receive 429 (Too Many Requests) responses
 2. After repeated violations (default: 10), get auto-banned for 1 hour (403 Forbidden)
 

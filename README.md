@@ -53,7 +53,7 @@ All configuration is in `_config/config.yml` with extensive inline comments. The
 
 ```yaml
 Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
-  rate_limit_requests: 100      # Max requests per IP per minute
+  rate_limit_requests: 150      # Max requests per IP per minute
   ban_threshold: 10             # Violations before auto-ban
   ban_duration: 3600            # Ban duration in seconds (1 hour)
   early_ban_enabled: true       # Self-contained fail2ban alternative

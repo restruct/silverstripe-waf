@@ -46,7 +46,7 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # Blocks requests completely when limit is exceeded.
   # Returns HTTP 429 Too Many Requests.
   rate_limit_enabled: true
-  rate_limit_requests: 100      # Max requests per IP per window
+  rate_limit_requests: 150      # Max requests per IP per window
   rate_limit_window: 60         # Window duration in seconds
 
   # ---------------------------------------------------------------------------
@@ -55,11 +55,11 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # Slows down requests as they approach the hard limit.
   # Discourages bots while allowing legitimate burst traffic.
   #
-  # Example with defaults (threshold 50%, max_delay 3000ms, limit 100):
-  #   50 requests  →  0ms delay (at threshold)
-  #   75 requests  →  1500ms delay
-  #   99 requests  →  2940ms delay
-  #   100+ requests → blocked (hard limit)
+  # Example with defaults (threshold 50%, max_delay 3000ms, limit 150):
+  #   75 requests  →  0ms delay (at threshold)
+  #   100 requests →  1000ms delay
+  #   130 requests →  2200ms delay
+  #   150+ requests → blocked (hard limit)
   soft_rate_limit_enabled: true
   soft_rate_limit_threshold: 50   # % of hard limit where delays start
   soft_rate_limit_max_delay: 3000 # Max delay in milliseconds (3 seconds)
@@ -69,7 +69,7 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # ---------------------------------------------------------------------------
   # IPs that still go through all security checks (bans, blocklist, user-agent)
   # but receive an elevated rate limit via a configurable multiplier.
-  # Factor multiplies the base rate limit: Factor 2.0 with 100 req/min = 200 req/min.
+  # Factor multiplies the base rate limit: Factor 2.0 with 150 req/min = 300 req/min.
   #
   # DB entries (managed via CMS admin) are merged with these config tiers.
   # DB entries override config for the same IP.
@@ -85,7 +85,12 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   #     factor: 5.0
   #     ips:
   #       - '203.0.113.50'
-  privileged_tiers: {}
+  privileged_tiers:
+    # SEO agencies / crawlers that need elevated limits
+    # 150 base × 2.5 = 375 effective req/min
+    seo_crawler:
+      factor: 2.5
+      ips: []
 
   # How long to cache the merged privileged IP list (seconds)
   privileged_ip_cache_duration: 300
