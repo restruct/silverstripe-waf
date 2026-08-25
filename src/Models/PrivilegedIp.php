@@ -2,8 +2,10 @@
 
 namespace Restruct\SilverStripe\Waf\Models;
 
+use Restruct\SilverStripe\Waf\Middleware\WafMiddleware;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
 use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Forms\DropdownField;
 use SilverStripe\Forms\FieldList;
 use SilverStripe\Forms\NumericField;
 use SilverStripe\Forms\TextField;
@@ -75,19 +77,46 @@ class PrivilegedIp extends DataObject
         # Replace auto-scaffolded fields with better configured ones
         $fields->removeByName(['IpAddress', 'Factor', 'Tier']);
 
+        $tierOptions = static::getTierOptions();
+        $hasTier = $this->Tier && isset($tierOptions[$this->Tier]);
+        $factorDesc = $hasTier
+            ? "Overridden by tier \"{$this->Tier}\" — change tier to use a custom factor"
+            : 'Multiplier for the base rate limit (e.g. 2.0 = double)';
+
         $fields->addFieldsToTab('Root.Main', [
             TextField::create('IpAddress', 'IP Address')
-                ->setDescription('Single IP or CIDR range')
+                ->setDescription(
+                    'Single IP (e.g. 1.2.3.4) or CIDR range.<br>'
+                    . 'CIDR = IP + /prefix size — a larger prefix means fewer addresses:<br>'
+                    . '&nbsp; /32 = single IP, /24 = 256 addresses (e.g. 10.0.0.0/24 = 10.0.0.0–10.0.0.255), /16 = 65K addresses.<br>'
+                    . '&nbsp; IPv6: use /128 for single, /64 for a subnet (e.g. 2001:db8::/64).'
+                )
                 ->setAttribute('placeholder', '1.2.3.4 or 10.0.0.0/8'),
+            DropdownField::create('Tier', 'Tier', $tierOptions)
+                ->setDescription('Select a predefined tier to inherit its rate limit factor, or choose "(Custom factor)" to set manually')
+                ->setEmptyString(''),
             NumericField::create('Factor', 'Rate Limit Factor')
-                ->setDescription('Multiplier for the base rate limit (e.g. 2.0 = double)')
+                ->setDescription($factorDesc)
                 ->setScale(1),
-            TextField::create('Tier', 'Tier')
-                ->setDescription('Group name for organization (e.g. Office, Partner, Monitoring)')
-                ->setAttribute('placeholder', 'Office'),
         ], 'IsActive');
 
         return $fields;
+    }
+
+    /**
+     * Build tier dropdown options from config
+     *
+     * @return array<string, string> tier_name => "tier_name (Nx)"
+     */
+    public static function getTierOptions(): array
+    {
+        $tiers = WafMiddleware::config()->get('privileged_tiers') ?: [];
+        $options = ['' => '(Custom factor)'];
+        foreach ($tiers as $name => $config) {
+            $factor = $config['factor'] ?? 2.0;
+            $options[$name] = "{$name} ({$factor}x)";
+        }
+        return $options;
     }
 
     public function validate(): ValidationResult
@@ -113,6 +142,22 @@ class PrivilegedIp extends DataObject
         }
 
         return $result;
+    }
+
+    /**
+     * When a tier is selected, cache the config factor into Factor field
+     * so the DB always has a valid fallback if a tier is later removed from config
+     */
+    protected function onBeforeWrite(): void
+    {
+        parent::onBeforeWrite();
+
+        if ($this->Tier) {
+            $tiers = WafMiddleware::config()->get('privileged_tiers') ?: [];
+            if (isset($tiers[$this->Tier])) {
+                $this->Factor = (float) ($tiers[$this->Tier]['factor'] ?? 2.0);
+            }
+        }
     }
 
     /**

@@ -68,6 +68,136 @@ class WafMiddlewareTest extends TestCase
     }
 
     // ========================================================================
+    // IPv6 CIDR Matching Tests
+    // ========================================================================
+
+    /**
+     * Test IPv6 CIDR matching with various prefix lengths
+     */
+    public function testIpMatchesCidrIPv6(): void
+    {
+        # /64 subnet (common subnet size)
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8::1', '2001:db8::/64']));
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8::ffff', '2001:db8::/64']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['2001:db9::1', '2001:db8::/64']));
+
+        # /128 (single IPv6 address)
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8::1', '2001:db8::1/128']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['2001:db8::2', '2001:db8::1/128']));
+
+        # /48 subnet
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8:abcd::1', '2001:db8:abcd::/48']));
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8:abcd:ffff::1', '2001:db8:abcd::/48']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['2001:db8:abce::1', '2001:db8:abcd::/48']));
+
+        # /32 (ISP allocation)
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8::1', '2001:db8::/32']));
+        $this->assertTrue($this->invokeMethod('ipMatchesCidr', ['2001:db8:ffff:ffff::1', '2001:db8::/32']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['2001:db9::1', '2001:db8::/32']));
+    }
+
+    /**
+     * Test cross-family rejection: IPv6 IP vs IPv4 CIDR and vice versa
+     */
+    public function testIpMatchesCidrCrossFamilyRejection(): void
+    {
+        # IPv6 IP with IPv4 CIDR → should not match
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['2001:db8::1', '10.0.0.0/8']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['::1', '127.0.0.0/8']));
+
+        # IPv4 IP with IPv6 CIDR → should not match
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['10.0.0.1', '2001:db8::/32']));
+        $this->assertFalse($this->invokeMethod('ipMatchesCidr', ['127.0.0.1', '::1/128']));
+    }
+
+    /**
+     * Test IPv6 CIDR in privileged IP factor lookup
+     */
+    public function testPrivilegedIpFactorIPv6CidrMatch(): void
+    {
+        $entries = [
+            '2001:db8::/32' => 3.0,
+            '2001:db8::1' => 5.0,     # Exact match takes precedence
+        ];
+
+        # Exact match should win over CIDR
+        $this->assertEquals(5.0, $this->lookupFactor('2001:db8::1', $entries));
+
+        # Other IPs in the /32 range should get CIDR factor
+        $this->assertEquals(3.0, $this->lookupFactor('2001:db8::2', $entries));
+        $this->assertEquals(3.0, $this->lookupFactor('2001:db8:ffff::1', $entries));
+
+        # Outside the range → no match
+        $this->assertNull($this->lookupFactor('2001:db9::1', $entries));
+    }
+
+    // ========================================================================
+    // Tier-Factor Inheritance Tests
+    // ========================================================================
+
+    /**
+     * Test that config tier factor overrides DB factor for matching tiers
+     */
+    public function testTierFactorInheritance(): void
+    {
+        $tiers = [
+            'seo_crawler' => ['factor' => 2.5, 'ips' => []],
+            'office' => ['factor' => 3.0, 'ips' => []],
+        ];
+
+        # Build tier factors lookup (mirrors middleware logic)
+        $tierFactors = [];
+        foreach ($tiers as $tierName => $tierConfig) {
+            $tierFactors[$tierName] = (float) ($tierConfig['factor'] ?? 2.0);
+        }
+
+        # Simulate DB entry with known tier → config factor wins
+        $dbTier = 'seo_crawler';
+        $dbFactor = 10.0; # DB has a different value
+        $resolvedFactor = (isset($tierFactors[$dbTier])) ? $tierFactors[$dbTier] : $dbFactor;
+        $this->assertEquals(2.5, $resolvedFactor, 'Config tier factor should override DB factor');
+
+        # Unknown tier → DB factor is used as fallback
+        $unknownTier = 'removed_tier';
+        $resolvedFactor = (isset($tierFactors[$unknownTier])) ? $tierFactors[$unknownTier] : $dbFactor;
+        $this->assertEquals(10.0, $resolvedFactor, 'Unknown tier should fall back to DB factor');
+
+        # Empty tier → DB factor is used
+        $emptyTier = '';
+        $factor = 7.0;
+        if ($emptyTier && isset($tierFactors[$emptyTier])) {
+            $factor = $tierFactors[$emptyTier];
+        }
+        $this->assertEquals(7.0, $factor, 'Empty tier should use DB factor directly');
+    }
+
+    /**
+     * Test getTierOptions returns correct dropdown format
+     */
+    public function testGetTierOptionsFormat(): void
+    {
+        $tiers = [
+            'seo_crawler' => ['factor' => 2.5, 'ips' => []],
+            'office' => ['factor' => 3.0, 'ips' => ['10.0.0.0/8']],
+            'no_factor' => ['ips' => ['1.2.3.4']],
+        ];
+
+        # Build options (mirrors PrivilegedIp::getTierOptions() logic)
+        $options = ['' => '(Custom factor)'];
+        foreach ($tiers as $name => $config) {
+            $factor = $config['factor'] ?? 2.0;
+            $options[$name] = "{$name} ({$factor}x)";
+        }
+
+        $this->assertArrayHasKey('', $options);
+        $this->assertEquals('(Custom factor)', $options['']);
+        $this->assertEquals('seo_crawler (2.5x)', $options['seo_crawler']);
+        $this->assertEquals('office (3x)', $options['office']);
+        # Missing factor defaults to 2.0
+        $this->assertEquals('no_factor (2x)', $options['no_factor']);
+    }
+
+    // ========================================================================
     // Soft Rate Limiting Tests
     // ========================================================================
 

@@ -247,9 +247,13 @@ HTML
         Privileged IPs still go through <strong>all security checks</strong> (bans, blocklist, user-agent)
         but receive an elevated rate limit via a configurable multiplier.
     </p>
-    <p style="margin-bottom: 0;">
+    <p style="margin-bottom: 5px;">
         <strong>Base rate limit:</strong> {$baseLimit} requests per {$window} seconds.
         A Factor of <strong>2.0</strong> = {$baseLimit} &times; 2 = <strong>{$exampleDouble}</strong> effective requests.
+    </p>
+    <p style="margin-bottom: 0;">
+        IPs assigned to a <strong>config tier</strong> automatically inherit that tier's factor.
+        Changing a tier's factor in YAML applies to all IPs in that tier.
     </p>
 </div>
 HTML

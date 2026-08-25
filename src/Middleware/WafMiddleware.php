@@ -206,12 +206,32 @@ class WafMiddleware implements HTTPMiddleware
         [$subnet, $bits] = explode('/', $cidr);
         $bits = (int) $bits;
 
+        # IPv4
         if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)
             && filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             $ipLong = ip2long($ip);
             $subnetLong = ip2long($subnet);
             $mask = -1 << (32 - $bits);
             return ($ipLong & $mask) === ($subnetLong & $mask);
+        }
+
+        # IPv6 — same approach as IpBlocklistService::ipInCidr()
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)
+            && filter_var($subnet, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            $ipBin = inet_pton($ip);
+            $subnetBin = inet_pton($subnet);
+            if ($ipBin === false || $subnetBin === false) {
+                return false;
+            }
+            # Build bitmask as hex string, then pack to binary
+            $mask = str_repeat('f', intdiv($bits, 4));
+            $remainder = $bits % 4;
+            if ($remainder) {
+                $mask .= dechex(0xf << (4 - $remainder));
+            }
+            $mask = str_pad($mask, 32, '0');
+            $maskBin = pack('H*', $mask);
+            return ($ipBin & $maskBin) === ($subnetBin & $maskBin);
         }
 
         return false;
@@ -396,22 +416,29 @@ class WafMiddleware implements HTTPMiddleware
 
         $entries = [];
 
-        # Flatten config tiers into [ip => factor] map
+        # Flatten config tiers into [ip => factor] map + build tier name → factor lookup
         $tiers = $this->config()->get('privileged_tiers') ?: [];
+        $tierFactors = [];
         foreach ($tiers as $tierName => $tierConfig) {
             $factor = (float) ($tierConfig['factor'] ?? 2.0);
+            $tierFactors[$tierName] = $factor;
             $ips = $tierConfig['ips'] ?? [];
             foreach ($ips as $ip) {
                 $entries[$ip] = $factor;
             }
         }
 
-        # Merge DB entries (override config for same IP)
+        # Merge DB entries — tier config factor overrides DB factor
         try {
             if (class_exists(PrivilegedIp::class)) {
                 $dbEntries = PrivilegedIp::get()->filter('IsActive', true);
                 foreach ($dbEntries as $entry) {
-                    $entries[$entry->IpAddress] = (float) $entry->Factor;
+                    $factor = (float) $entry->Factor;
+                    # If entry is assigned to a config tier, inherit that tier's factor
+                    if ($entry->Tier && isset($tierFactors[$entry->Tier])) {
+                        $factor = $tierFactors[$entry->Tier];
+                    }
+                    $entries[$entry->IpAddress] = $factor;
                 }
             }
         } catch (\Exception $e) {
