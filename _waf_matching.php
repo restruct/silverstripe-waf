@@ -191,6 +191,14 @@ function wafBlockedPathEntries(): array
         ['pattern' => '/~',              'match' => 'prefix',  'class' => 'server-admin',
          'note' => 'unix userdir probes (/~root); was a bare ~ substring matching ANY tilde'],
 
+        // --- mail-probe (Exchange/Outlook autodiscover; no legitimate answer on an SS
+        //     site — waf#1). export:false: the nginx parasite blocklist already owns these
+        //     as exact-match locations, and a duplicate `location =` is an [emerg]. ---
+        ['pattern' => '/autodiscover/autodiscover.xml', 'match' => 'exact', 'class' => 'mail-probe', 'export' => false],
+        ['pattern' => '/autodiscover.xml',              'match' => 'exact', 'class' => 'mail-probe', 'export' => false],
+        ['pattern' => '/fpurl.xml',                     'match' => 'exact', 'class' => 'mail-probe', 'export' => false,
+         'note' => 'matching is case-insensitive; also covers /FPURL.xml'],
+
         // --- php-probe ---
         ['pattern' => '/admin.php',   'match' => 'exact', 'class' => 'php-probe'],
         ['pattern' => '/debug.php',   'match' => 'exact', 'class' => 'php-probe'],

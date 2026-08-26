@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.2
+
+### Added
+
+- **Microsoft autodiscover / `FPURL.xml` probes added to the inventory** (waf#1). Exchange/Outlook
+  autodiscover probes have no legitimate answer on a Silverstripe site and were the one probe class
+  with hard evidence of consuming FPM workers during a real outage. `export: false` — the nginx
+  parasite blocklist already owns these as exact-match locations, and a duplicate `location =` would
+  be an nginx `[emerg]`; so this closes the gap for **standalone (no-webserver-config) sites** without
+  affecting the exported nginx block. 132 tests.
+
 ## 1.5.1
 
 ### Fixed

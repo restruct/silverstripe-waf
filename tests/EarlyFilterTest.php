@@ -90,6 +90,8 @@ class EarlyFilterTest extends TestCase
             '/_profiler/phpinfo', '/telescope/requests', '/actuator/env',
             '/index.php.bak', '/wp-config.php.orig', '/.index.php.swp',
             '/site.env', '/config/prod.env',
+            // mail-probe (waf#1)
+            '/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml', '/FPURL.xml',
         ]);
     }
 
@@ -206,5 +208,7 @@ class EarlyFilterTest extends TestCase
         // Excluded classes must not leak:
         $this->assertArrayNotHasKey('/.env', $byPattern, 'dotfiles are export:false');
         $this->assertArrayNotHasKey('../', $byPattern, 'traversal is not exported');
+        $this->assertArrayNotHasKey('/autodiscover/autodiscover.xml', $byPattern,
+            'autodiscover is export:false — nginx parasite block owns it, a dup location = [emerg]');
     }
 }
