@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- **`resources/blocklist.json` export: `suffix` entries are now emitted as `"match":
+  "suffix"`, not `"extension"`.** The 1.5.0 exporter flattened basename-suffix patterns
+  (e.g. `/shell.php`) into the same `extension` type as true file-extensions (e.g.
+  `.bak`), losing the fact that the leading `/` is significant. A consumer rendering
+  `/shell.php` as an extension would emit `~* shell\.php$`, which also matches
+  `/notshell.php` — the waf#3 false-positive class, reintroduced at the webserver layer.
+  Reported by the forge-helper consumer. Export match set is now
+  `{exact, prefix, suffix, contains}` — `extension` no longer appears. A consumer maps
+  `suffix` → `location ~* <escaped-pattern>$` with the pattern's leading char preserved.
+  A new test pins the export shape so this can't silently drift again.
+
 ## 1.5.0
 
 Path-matching engine rewrite and default hardening. **Read the "behaviour changes"

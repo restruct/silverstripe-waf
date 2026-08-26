@@ -171,4 +171,40 @@ class EarlyFilterTest extends TestCase
         $path = parse_url($uri, PHP_URL_PATH);
         $this->assertNull(wafMatchBlockedPath($path), 'probe strings in query must not block');
     }
+
+    // ========================================================================
+    // Export-shape guard (waf#2). The forge-helper consumer pins our
+    // resources/blocklist.json as a fixture, so a schema drift breaks its suite;
+    // this pins the same invariants on our side so it breaks here first.
+    // ========================================================================
+
+    public function testExportShapeIsStable(): void
+    {
+        $json = shell_exec(
+            'php ' . escapeshellarg(dirname(__DIR__) . '/bin/export-blocklist.php') . ' 9.9.9 --stdout'
+        );
+        $doc = json_decode($json, true);
+
+        $this->assertSame(1, $doc['schema'], 'export schema must stay 1 unless consumers are told');
+        $this->assertNotEmpty($doc['entries']);
+
+        // The export match set is exactly {exact, prefix, suffix, contains}: no 'segment'
+        // (flattened), no 'traversal'/dotfiles (not exported), and crucially no
+        // 'extension' — suffix must stay suffix so /shell.php is not conflated with .bak.
+        $allowed = ['exact', 'prefix', 'suffix', 'contains'];
+        foreach ($doc['entries'] as $e) {
+            $this->assertContains($e['match'], $allowed, "unexpected export match type {$e['match']} for {$e['pattern']}");
+        }
+
+        $byPattern = [];
+        foreach ($doc['entries'] as $e) {
+            $byPattern[$e['pattern']] = $e['match'];
+        }
+        // The distinction the consumer relies on:
+        $this->assertSame('suffix', $byPattern['/shell.php'] ?? null, 'basename-suffix must export as suffix');
+        $this->assertSame('suffix', $byPattern['.bak'] ?? null, 'true extension also exports as suffix');
+        // Excluded classes must not leak:
+        $this->assertArrayNotHasKey('/.env', $byPattern, 'dotfiles are export:false');
+        $this->assertArrayNotHasKey('../', $byPattern, 'traversal is not exported');
+    }
 }

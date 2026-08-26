@@ -1,6 +1,6 @@
 {
     "schema": 1,
-    "version": "1.5.0",
+    "version": "1.5.1",
     "entries": [
         {
             "pattern": "/@vite",
@@ -29,7 +29,7 @@
         },
         {
             "pattern": ".env",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak",
             "note": "replaces the old config.env/stripe.env pair: any path ending .env"
         },
@@ -60,12 +60,12 @@
         },
         {
             "pattern": "/config.inc.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/config.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
@@ -80,27 +80,27 @@
         },
         {
             "pattern": "/configuration.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/conn.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/connect.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/database.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/db.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
@@ -125,12 +125,12 @@
         },
         {
             "pattern": "/id_dsa",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
             "pattern": "/id_rsa",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
@@ -170,7 +170,7 @@
         },
         {
             "pattern": "/settings.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "config-leak"
         },
         {
@@ -346,17 +346,17 @@
         },
         {
             "pattern": ".bak",
-            "match": "extension",
+            "match": "suffix",
             "class": "editor-junk"
         },
         {
             "pattern": ".orig",
-            "match": "extension",
+            "match": "suffix",
             "class": "editor-junk"
         },
         {
             "pattern": ".swp",
-            "match": "extension",
+            "match": "suffix",
             "class": "editor-junk"
         },
         {
@@ -472,7 +472,7 @@
         },
         {
             "pattern": "/phpinfo.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "php-probe"
         },
         {
@@ -564,12 +564,12 @@
         },
         {
             "pattern": "/0x.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/adminer.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
@@ -604,12 +604,12 @@
         },
         {
             "pattern": "/c99.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/eval-stdin.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
@@ -634,32 +634,32 @@
         },
         {
             "pattern": "/leaf.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/mini.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/r57.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/shell.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/webadmin.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell"
         },
         {
             "pattern": "/wso.php",
-            "match": "extension",
+            "match": "suffix",
             "class": "webshell",
             "note": "matching is case-insensitive; also covers WSO.php"
         },

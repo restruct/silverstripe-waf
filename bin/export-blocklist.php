@@ -10,13 +10,18 @@
  *   { "schema": 1, "version": "<module version>", "entries": [
  *       { "pattern": "/wp-admin", "match": "prefix", "class": "wordpress", "note": "…" } ] }
  *
- *   match ∈ {exact, prefix, extension, contains} — consumer mapping:
- *     exact → `location =` · prefix → `location ^~` · extension → `location ~* \.ext$`
+ *   match ∈ {exact, prefix, suffix, contains} — consumer mapping:
+ *     exact  → `location =`
+ *     prefix → `location ^~`
+ *     suffix → `location ~* <escaped-pattern>$`  (pattern is the literal the PATH ends
+ *              with, leading char included: '/shell.php' → `~* /shell\.php$`, NOT
+ *              `~* shell\.php$`; '.bak' → `~* \.bak$`)
  *     contains → escaped-literal regex
  *
  * Internal→export type mapping (the runtime matcher is richer than the export schema):
  *   segment   → flattened to TWO entries: exact `/name` + prefix `/name/`
- *   suffix    → extension (same semantics: path ends-with)
+ *   suffix    → emitted AS suffix (NOT 'extension' — that conflated basename-suffixes
+ *               like '/shell.php' with true extensions like '.bak'; see the switch below)
  *   traversal → never exported (nginx URI normalisation already rejects these)
  *   'export' => false entries are skipped (dotfiles: stock vhost deny covers them)
  *
@@ -48,14 +53,21 @@ foreach (wafBlockedPathEntries() as $entry) {
 
     switch ($entry['match']) {
         case 'segment':
-            # exact hit on the bare name + prefix on everything below it
+            # segment is exact-OR-subtree; flatten losslessly to exact + prefix so a
+            # consumer only needs those two forms for it.
             $out[] = $base + ['match' => 'exact'];
             $out[] = ['pattern' => $entry['pattern'] . '/', 'class' => $entry['class'], 'match' => 'prefix'];
             break;
-        case 'suffix':
-            $out[] = $base + ['match' => 'extension'];
-            break;
         default:
+            # exact / prefix / suffix / contains pass through unchanged.
+            # NB: suffix is emitted AS suffix — do NOT remap it to 'extension'. The
+            # pattern is a literal the PATH must end with, and it is basename-anchored
+            # by its own leading char: '/shell.php' means end-with '/shell.php' (so
+            # '/notshell.php' does NOT match), '.bak' means end-with '.bak'. A consumer
+            # renders both as `~* <escaped-pattern>$`. Collapsing to 'extension' loses
+            # that the leading slash is significant and would reintroduce the waf#3
+            # false-positive class at the webserver layer (reported by the forge-helper
+            # consumer, 2026-08-26).
             $out[] = $base + ['match' => $entry['match']];
     }
 }
