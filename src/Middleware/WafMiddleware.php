@@ -52,9 +52,31 @@ class WafMiddleware implements HTTPMiddleware
     private static int $rate_limit_window = 60;
 
     // Soft rate limiting (progressive delays before hard block)
-    private static bool $soft_rate_limit_enabled = true;
+    // ⚠ DEFAULT OFF since 1.5.0 (waf#4): the delay is a usleep() INSIDE the PHP-FPM
+    // worker, so every soft-limited request holds a scarce worker slot for up to
+    // max_delay ms. On a worker-constrained host this amplifies the exact pool-
+    // exhaustion failure it appears to defend against, and fast human users can
+    // trigger it (AJAX-per-keystroke UIs cross the threshold easily). Prefer the
+    // hard 429 (frees the worker immediately, well-behaved clients back off), or
+    // delay-shaping in the webserver (nginx limit_req burst+delay costs no PHP).
+    private static bool $soft_rate_limit_enabled = false;
     private static int $soft_rate_limit_threshold = 50;  // Start delaying at this % of hard limit
     private static int $soft_rate_limit_max_delay = 3000; // Max delay in milliseconds
+
+    // Verified-crawler rate-limit exemption (waf#4): search-engine bots verified by
+    // FORWARD-CONFIRMED reverse DNS (never by UA string alone — trivially spoofed)
+    // bypass rate limiting only. All other checks (blocklist, bans, UA blocklist,
+    // path filtering) still apply to them. Verification is lazy (only for IPs that
+    // approach the soft threshold) and cached for 24h, so the DNS cost is one lookup
+    // per heavy-hitter IP per day.
+    private static bool $rate_limit_exempt_verified_bots = true;
+    private static array $verified_bot_signatures = [
+        // UA-claim regex => list of rDNS parent domains that legitimise the claim
+        '/googlebot/i'    => ['googlebot.com', 'google.com'],
+        '/bingbot/i'      => ['search.msn.com'],
+        '/applebot/i'     => ['applebot.apple.com'],
+        '/duckduckbot/i'  => ['duckduckgo.com'],
+    ];
 
     // Auto-ban
     private static bool $auto_ban_enabled = true;
@@ -142,6 +164,17 @@ class WafMiddleware implements HTTPMiddleware
             $baseSoftThreshold = (int) ($hardLimit * $softPct / 100);
 
             if ($requestCount >= $baseSoftThreshold) {
+                # Verified search-engine crawlers bypass rate limiting entirely — a
+                # Googlebot crawl burst getting soft-delayed/429'd is crawl-budget and
+                # SEO damage on exactly the sites this module protects (waf#4). Checked
+                # lazily here so the rDNS cost only ever applies to heavy hitters.
+                if ($this->config()->get('rate_limit_exempt_verified_bots')
+                    && $this->isVerifiedBot($ip, $userAgent)
+                ) {
+                    $this->recordRequest($ip);
+                    return $delegate($request);
+                }
+
                 $factor = $this->getPrivilegedIpFactor($ip);
                 if ($factor !== null) {
                     $effectiveLimit = (int) ceil($hardLimit * $factor);
@@ -362,6 +395,66 @@ class WafMiddleware implements HTTPMiddleware
             // Apply delay (usleep takes microseconds)
             usleep($delayMs * 1000);
         }
+    }
+
+    // ========================================================================
+    // Verified-Bot Check (forward-confirmed reverse DNS)
+    // ========================================================================
+
+    /**
+     * Is this IP a search-engine crawler it claims to be?
+     *
+     * UA string alone proves nothing (spoofed constantly — goflex logged one IP
+     * cycling four different bot UAs). The accepted verification is the one the
+     * engines themselves document: reverse-DNS the IP, require the hostname to sit
+     * under a known parent domain, then FORWARD-resolve that hostname and require
+     * it to map back to the same IP. Both verdicts are cached for 24h.
+     */
+    protected function isVerifiedBot(string $ip, string $userAgent): bool
+    {
+        if ($userAgent === '') {
+            return false;
+        }
+
+        # Does the UA even claim to be a bot we'd exempt? (cheap, no DNS)
+        $domains = null;
+        foreach ($this->config()->get('verified_bot_signatures') ?: [] as $pattern => $parentDomains) {
+            if (preg_match($pattern, $userAgent)) {
+                $domains = $parentDomains;
+                break;
+            }
+        }
+        if ($domains === null) {
+            return false;
+        }
+
+        $cache = $this->getCache();
+        $cacheKey = 'botverify_' . md5($ip);
+        $cached = $cache->get($cacheKey);
+        if ($cached !== null) {
+            return (bool) $cached;
+        }
+
+        $verified = false;
+        # gethostbyaddr can block on broken rDNS — acceptable because this path only
+        # runs for IPs already past the soft threshold, at most once per 24h per IP.
+        $host = @gethostbyaddr($ip);
+        if ($host !== false && $host !== $ip) {
+            $hostLower = strtolower(rtrim($host, '.'));
+            foreach ($domains as $domain) {
+                if ($hostLower === $domain || str_ends_with($hostLower, '.' . $domain)) {
+                    # Forward-confirm: the claimed hostname must resolve back to this IP
+                    if (@gethostbyname($host) === $ip) {
+                        $verified = true;
+                    }
+                    break;
+                }
+            }
+        }
+
+        $cache->set($cacheKey, $verified ? 1 : 0, 86400);
+
+        return $verified;
     }
 
     // ========================================================================

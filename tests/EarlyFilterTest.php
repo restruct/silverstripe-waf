@@ -5,243 +5,170 @@ namespace Restruct\SilverStripe\Waf\Tests;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Unit tests for the early filter's pattern matching logic
+ * Tests for the early filter's typed path matching (_waf_matching.php).
  *
- * Note: The actual _waf_early_filter.php can't be tested directly as it
- * uses exit() and global state. These tests verify the pattern matching
- * logic in isolation.
+ * Since 1.5.0 the inventory and matcher are shared code with no exit()/globals,
+ * so these tests exercise the REAL production list — no more duplicated copy
+ * that drifts from the shipped one (the pre-1.5.0 test list had exactly that
+ * problem, which is how the waf#3 false positives went unnoticed).
  */
 class EarlyFilterTest extends TestCase
 {
-    protected array $blockedPaths = [
-        // WordPress probes
-        '/wp-admin', '/wp-login', '/wp-content', '/wp-includes',
-        '/xmlrpc.php', '/wp-config', '/wp-cron.php', '/wp-json',
-
-        // PHP backdoors/webshells
-        '/eval-stdin.php', '/alfacgiapi', '/alfa-rex',
-        '/shell.php', '/c99.php', '/r57.php', '/wso.php',
-
-        // Config/sensitive files
-        '/.env', '/.git', '/.svn', '/.htpasswd', '/.htaccess',
-        '/config.php', '/configuration.php',
-
-        // Env config variants (not caught by /.env)
-        'config.env', 'stripe.env', '/env.js', '/env.backup', '/__env.js',
-
-        // Build tool / framework dev probes
-        '/@vite/', '/.vite/', '/node_modules/', '/asset-manifest.json',
-
-        // Database tools
-        '/phpmyadmin', '/pma/', '/myadmin/', '/adminer',
-
-        // Path traversal
-        '../', '..%2f', '..%252f',
-
-        // Backup files
-        '.bak', '.backup', '.old', '.sql', '.zip',
-    ];
-
-    // ========================================================================
-    // Path Pattern Matching Tests
-    // ========================================================================
-
-    /**
-     * Test WordPress probe detection
-     */
-    public function testBlocksWordPressProbes(): void
+    public static function setUpBeforeClass(): void
     {
-        $this->assertBlocked('/wp-admin/');
-        $this->assertBlocked('/wp-admin/admin.php');
-        $this->assertBlocked('/wp-login.php');
-        $this->assertBlocked('/wp-content/uploads/2024/');
-        $this->assertBlocked('/wp-includes/js/jquery.js');
-        $this->assertBlocked('/xmlrpc.php');
-        $this->assertBlocked('/wp-config.php');
-        $this->assertBlocked('/WP-ADMIN/'); // Case insensitive
-    }
-
-    /**
-     * Test webshell probe detection
-     */
-    public function testBlocksWebshellProbes(): void
-    {
-        $this->assertBlocked('/eval-stdin.php');
-        $this->assertBlocked('/shell.php');
-        $this->assertBlocked('/c99.php');
-        $this->assertBlocked('/r57.php');
-        $this->assertBlocked('/wso.php');
-        $this->assertBlocked('/images/shell.php');
-        $this->assertBlocked('/SHELL.PHP'); // Case insensitive
-    }
-
-    /**
-     * Test config file probe detection
-     */
-    public function testBlocksConfigFileProbes(): void
-    {
-        $this->assertBlocked('/.env');
-        $this->assertBlocked('/.env.backup');
-        $this->assertBlocked('/.git/config');
-        $this->assertBlocked('/.git/HEAD');
-        $this->assertBlocked('/.svn/entries');
-        $this->assertBlocked('/.htpasswd');
-        $this->assertBlocked('/.htaccess');
-        $this->assertBlocked('/config.php');
-        $this->assertBlocked('/app/config.php');
-    }
-
-    /**
-     * Test database admin tool detection
-     */
-    public function testBlocksDatabaseAdminProbes(): void
-    {
-        $this->assertBlocked('/phpmyadmin/');
-        $this->assertBlocked('/phpMyAdmin/index.php');
-        $this->assertBlocked('/pma/index.php');
-        $this->assertBlocked('/myadmin/');
-        $this->assertBlocked('/adminer.php');
-        $this->assertBlocked('/adminer/');
-    }
-
-    /**
-     * Test path traversal detection
-     */
-    public function testBlocksPathTraversal(): void
-    {
-        $this->assertBlocked('/../etc/passwd');
-        $this->assertBlocked('/images/../../etc/passwd');
-        $this->assertBlocked('/..%2f..%2fetc/passwd');
-        $this->assertBlocked('/..%252f..%252fetc/passwd');
-    }
-
-    /**
-     * Test backup file detection
-     */
-    public function testBlocksBackupFiles(): void
-    {
-        $this->assertBlocked('/config.php.bak');
-        $this->assertBlocked('/database.sql');
-        $this->assertBlocked('/backup.zip');
-        $this->assertBlocked('/site.backup');
-        $this->assertBlocked('/db.old');
-    }
-
-    /**
-     * Test env config variant detection (files using .env as extension)
-     */
-    public function testBlocksEnvConfigVariants(): void
-    {
-        $this->assertBlocked('/config.env');
-        $this->assertBlocked('/stripe.env');
-        $this->assertBlocked('/env.js');
-        $this->assertBlocked('/__env.js');
-        $this->assertBlocked('/env.backup');
-        $this->assertBlocked('/app/config.env');
-        $this->assertBlocked('/assets/stripe.env');
-    }
-
-    /**
-     * Test build tool / framework dev probe detection
-     */
-    public function testBlocksBuildToolProbes(): void
-    {
-        $this->assertBlocked('/@vite/client');
-        $this->assertBlocked('/.vite/deps/react.js');
-        $this->assertBlocked('/node_modules/lodash/index.js');
-        $this->assertBlocked('/asset-manifest.json');
-    }
-
-    /**
-     * Test legitimate paths are allowed
-     */
-    public function testAllowsLegitimatePaths(): void
-    {
-        $this->assertNotBlocked('/');
-        $this->assertNotBlocked('/about/');
-        $this->assertNotBlocked('/contact/');
-        $this->assertNotBlocked('/admin/');  // SilverStripe admin
-        $this->assertNotBlocked('/Security/login');
-        $this->assertNotBlocked('/assets/image.jpg');
-        $this->assertNotBlocked('/resources/script.js');
-        $this->assertNotBlocked('/api/v1/users');
+        require_once dirname(__DIR__) . '/_waf_matching.php';
     }
 
     // ========================================================================
-    // PHP Probe Detection Tests
+    // Matching-type semantics (one focused test per type)
     // ========================================================================
 
-    /**
-     * Test random PHP file probe detection pattern
-     *
-     * Note: The pattern matches short PHP filenames. The actual filter
-     * has a whitelist to allow legitimate files like /index.php.
-     * This test validates pattern matching, not the whitelist logic.
-     */
-    public function testRandomPhpProbePattern(): void
+    public function testExactMatchesWholePathOnly(): void
     {
-        $pattern = '/^\/[a-z0-9_]{2,8}\.php$/i';
+        $e = [['pattern' => '/artisan', 'match' => 'exact', 'class' => 't']];
+        $this->assertNotNull(wafMatchBlockedPath('/artisan', $e));
+        $this->assertNotNull(wafMatchBlockedPath('/ARTISAN', $e), 'case-insensitive');
+        $this->assertNull(wafMatchBlockedPath('/artisan-bakker', $e));
+        $this->assertNull(wafMatchBlockedPath('/artisan/x', $e));
+        $this->assertNull(wafMatchBlockedPath('/x/artisan', $e));
+    }
 
-        // These should match the probe pattern (potential probes)
-        $this->assertMatchesPattern($pattern, '/ab.php');
-        $this->assertMatchesPattern($pattern, '/abc.php');
-        $this->assertMatchesPattern($pattern, '/test1234.php');
-        $this->assertMatchesPattern($pattern, '/xyz_abc.php');
-        $this->assertMatchesPattern($pattern, '/index.php');  // Matches pattern, but whitelisted in filter
+    public function testPrefixMatchesStems(): void
+    {
+        $e = [['pattern' => '/wp-admin', 'match' => 'prefix', 'class' => 't']];
+        $this->assertNotNull(wafMatchBlockedPath('/wp-admin', $e));
+        $this->assertNotNull(wafMatchBlockedPath('/wp-admin/setup-config.php', $e));
+        $this->assertNotNull(wafMatchBlockedPath('/wp-admin.php', $e));
+        $this->assertNull(wafMatchBlockedPath('/xwp-admin', $e));
+    }
 
-        // These should NOT match (too short, too long, or wrong structure)
-        $this->assertNotMatchesPattern($pattern, '/a.php');         // Too short (1 char)
-        $this->assertNotMatchesPattern($pattern, '/abcdefghi.php'); // Too long (9 chars)
-        $this->assertNotMatchesPattern($pattern, '/dir/file.php');  // Has subdirectory
-        $this->assertNotMatchesPattern($pattern, '/file.txt');      // Not PHP
+    public function testSegmentMatchesNameOrSubtreeButNotLongerWords(): void
+    {
+        $e = [['pattern' => '/plesk', 'match' => 'segment', 'class' => 't']];
+        $this->assertNotNull(wafMatchBlockedPath('/plesk', $e));
+        $this->assertNotNull(wafMatchBlockedPath('/plesk/login.php', $e));
+        $this->assertNull(wafMatchBlockedPath('/pleskens', $e), 'surname must not match');
+        $this->assertNull(wafMatchBlockedPath('/team/plesk', $e), 'not path-start');
+    }
+
+    public function testSuffixIsBasenameAnchored(): void
+    {
+        $e = [['pattern' => '/config.php', 'match' => 'suffix', 'class' => 't']];
+        $this->assertNotNull(wafMatchBlockedPath('/config.php', $e));
+        $this->assertNotNull(wafMatchBlockedPath('/app/config.php', $e));
+        $this->assertNull(wafMatchBlockedPath('/xconfig.php', $e), 'leading slash anchors the basename');
+    }
+
+    public function testTraversalMatchesRawAndDecodedForms(): void
+    {
+        $entries = wafBlockedPathEntries();
+        $this->assertNotNull(wafMatchBlockedPath('/..%2fetc/passwd', $entries), 'encoded, raw view');
+        $this->assertNotNull(wafMatchBlockedPath('/%2e%2e/%2e%2e/etc/passwd', $entries));
+        $this->assertNotNull(wafMatchBlockedPath('/etc/../etc/passwd', $entries), 'plain form');
     }
 
     // ========================================================================
-    // Helper Methods
+    // Probe battery — genuine attack paths must all block (real inventory)
     // ========================================================================
 
-    /**
-     * Assert that a URI would be blocked
-     */
-    protected function assertBlocked(string $uri): void
+    public function probeProvider(): array
     {
-        $uriLower = strtolower($uri);
-        foreach ($this->blockedPaths as $pattern) {
-            if (stripos($uriLower, strtolower($pattern)) !== false) {
-                $this->assertTrue(true);
-                return;
-            }
+        return array_map(fn($u) => [$u], [
+            '/wp-login.php', '/wp-admin/setup-config.php', '/xmlrpc.php', '/wp-json/wp/v2/users',
+            '/administrator/index.php', '/htaccess.txt',
+            '/core/install.php', '/update.php',
+            '/app/etc/local.xml', '/downloader/',
+            '/artisan', '/storage/logs/laravel.log', '/.env', '/.env.production',
+            '/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php',
+            '/shell.php', '/old/shell.php', '/WSO.php', '/adminer.php',
+            '/.git/config', '/.aws/credentials', '/id_rsa', '/backup/id_rsa',
+            '/config.php', '/app/config.php', '/composer.json', '/web.config',
+            '/phpmyadmin/index.php', '/phpMyAdmin/', '/pma/index.php',
+            '/cgi-bin/test.cgi', '/cpanel', '/plesk/login.php', '/webmin/',
+            '/~root/.ssh/id_rsa',
+            '/admin.php', '/test.php', '/phpinfo.php', '/old/phpinfo.php',
+            '/_profiler/phpinfo', '/telescope/requests', '/actuator/env',
+            '/index.php.bak', '/wp-config.php.orig', '/.index.php.swp',
+            '/site.env', '/config/prod.env',
+        ]);
+    }
+
+    /** @dataProvider probeProvider */
+    public function testGenuineProbesAreBlocked(string $path): void
+    {
+        $this->assertNotNull(
+            wafMatchBlockedPath($path),
+            "Probe path should be blocked: $path"
+        );
+    }
+
+    // ========================================================================
+    // False-positive battery — waf#3/waf#5 regressions. Every entry is a plausible
+    // real URL on SOME Silverstripe site (goflex is a vacancy site, hence the
+    // healthcare/artisan slugs). None may match the shipped inventory.
+    // ========================================================================
+
+    public function legitProvider(): array
+    {
+        return array_map(fn($u) => [$u], [
+            // content vocabulary that used to collide (waf#3/waf#5)
+            '/vacatures/healthcare-manager-utrecht',
+            '/vacatures/item/9695/omscholen-tot-monteur',
+            '/en/health-and-safety-officer',
+            '/metrics-analist-vacature',
+            '/vacatures/artisan-bakker-amsterdam',
+            '/team/pleskens',
+            '/webminar-aanmelden',
+            '/nieuws/database-trends-2026',
+            '/console-operator-vacature',
+            '/over-ons/~historie~',
+            // downloads + protected-asset extensions (dropped from the block list)
+            '/downloads/brochure-2026.zip',
+            '/assets/uploads/jaarrapport.tar.gz',
+            '/assets/Uploads/backup-foto.sql',
+            '/documenten/cao.old',
+            // framework-legit / site-legit paths
+            '/', '/index.php', '/search', '/admin/pages', '/Security/login',
+            '/vacatures/xmlroc',
+            '/mbo-opleidingen/gezondheidszorg',
+            '/api/testimonials',
+        ]);
+    }
+
+    /** @dataProvider legitProvider */
+    public function testLegitimateUrlsAreNotBlocked(string $path): void
+    {
+        $this->assertNull(
+            wafMatchBlockedPath($path),
+            "Legitimate URL must not be blocked: $path"
+        );
+    }
+
+    // ========================================================================
+    // The inventory itself is well-formed (guards against a malformed entry
+    // shipping — every pattern needs a known match type and a class).
+    // ========================================================================
+
+    public function testInventoryIsWellFormed(): void
+    {
+        $validTypes = ['exact', 'prefix', 'segment', 'suffix', 'contains', 'traversal'];
+        foreach (wafBlockedPathEntries() as $i => $e) {
+            $this->assertArrayHasKey('pattern', $e, "entry $i missing pattern");
+            $this->assertArrayHasKey('match', $e, "entry {$e['pattern']} missing match");
+            $this->assertArrayHasKey('class', $e, "entry {$e['pattern']} missing class");
+            $this->assertContains($e['match'], $validTypes, "entry {$e['pattern']} bad match type");
+            $this->assertNotSame('', $e['pattern'], "empty pattern at $i");
         }
-        $this->fail("URI should be blocked: {$uri}");
     }
 
-    /**
-     * Assert that a URI would NOT be blocked
-     */
-    protected function assertNotBlocked(string $uri): void
+    public function testQueryStringIsNeverPartOfTheMatch(): void
     {
-        $uriLower = strtolower($uri);
-        foreach ($this->blockedPaths as $pattern) {
-            if (stripos($uriLower, strtolower($pattern)) !== false) {
-                $this->fail("URI should NOT be blocked: {$uri} (matched: {$pattern})");
-            }
-        }
-        $this->assertTrue(true);
-    }
-
-    /**
-     * Assert that a URI matches a regex pattern
-     */
-    protected function assertMatchesPattern(string $pattern, string $uri): void
-    {
-        $this->assertMatchesRegularExpression($pattern, $uri, "URI should match pattern: {$uri}");
-    }
-
-    /**
-     * Assert that a URI does NOT match a regex pattern
-     */
-    protected function assertNotMatchesPattern(string $pattern, string $uri): void
-    {
-        $this->assertDoesNotMatchRegularExpression($pattern, $uri, "URI should NOT match pattern: {$uri}");
+        // The caller passes only the path; prove a hostile query can't trigger a block
+        // even when it contains a probe string (the pre-1.5.0 REQUEST_URI bug).
+        $this->assertNull(wafMatchBlockedPath('/search'), 'baseline');
+        // simulate what the filter does: parse_url path only
+        $uri = '/search?q=/wp-admin+and+.env+and+../etc';
+        $path = parse_url($uri, PHP_URL_PATH);
+        $this->assertNull(wafMatchBlockedPath($path), 'probe strings in query must not block');
     }
 }

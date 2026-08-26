@@ -156,7 +156,11 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # ---------------------------------------------------------------------------
   # Requests matching these patterns are blocked immediately.
   blocked_user_agents:
-    - '/^$/i'                   # Empty user-agent (common in bots)
+    # NOTE (1.5.0, waf#5): the empty-UA block ('/^$/i') was removed from the shipped
+    # defaults — legitimate empty-UA senders exist (payment/webhook callbacks, naive
+    # monitoring probes, un-flagged curl in cron scripts) and a 403 to a webhook is a
+    # silent integration breaker. Re-enable per site if your traffic profile allows:
+    #- '/^$/i'                  # Empty user-agent
     - '/sqlmap/i'               # SQL injection tool
     - '/nikto/i'                # Vulnerability scanner
     - '/nmap/i'                 # Network scanner

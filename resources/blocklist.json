@@ -1,0 +1,722 @@
+{
+    "schema": 1,
+    "version": "1.5.0",
+    "entries": [
+        {
+            "pattern": "/@vite",
+            "match": "exact",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/@vite/",
+            "match": "prefix",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/asset-manifest.json",
+            "match": "exact",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/node_modules",
+            "match": "exact",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/node_modules/",
+            "match": "prefix",
+            "class": "build-tool"
+        },
+        {
+            "pattern": ".env",
+            "match": "extension",
+            "class": "config-leak",
+            "note": "replaces the old config.env/stripe.env pair: any path ending .env"
+        },
+        {
+            "pattern": "/__env.js",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/behat.yml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/codeception.yml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/composer.json",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/composer.lock",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/config.inc.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/config.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/config.yaml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/config.yml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/configuration.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/conn.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/connect.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/database.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/db.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/env.backup",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/env.js",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/gemfile",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/gemfile.lock",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/id_dsa",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/id_rsa",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/jenkinsfile",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/localsettings.php",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/package.json",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/parameters.yml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/phpcs.xml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/phpunit.xml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/rakefile",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/settings.php",
+            "match": "extension",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/web.config",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/adminer",
+            "match": "exact",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/adminer/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/dbadmin",
+            "match": "exact",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/dbadmin/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/myadmin",
+            "match": "exact",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/myadmin/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/mysql",
+            "match": "exact",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/mysql/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/phpmyadmin",
+            "match": "exact",
+            "class": "db-tool",
+            "note": "case-insensitive; also covers /phpMyAdmin"
+        },
+        {
+            "pattern": "/phpmyadmin/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/pma",
+            "match": "exact",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/pma/",
+            "match": "prefix",
+            "class": "db-tool"
+        },
+        {
+            "pattern": "/__debug__",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/__debug__/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_debug",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_debug/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_profiler",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_profiler/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_wdt",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/_wdt/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/actuator",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/actuator/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/elmah.axd",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/glimpse.axd",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/telescope",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/telescope/",
+            "match": "prefix",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/trace.axd",
+            "match": "exact",
+            "class": "debug-endpoint"
+        },
+        {
+            "pattern": "/core/install.php",
+            "match": "exact",
+            "class": "drupal"
+        },
+        {
+            "pattern": "/cron.php",
+            "match": "exact",
+            "class": "drupal"
+        },
+        {
+            "pattern": "/misc/drupal.js",
+            "match": "exact",
+            "class": "drupal"
+        },
+        {
+            "pattern": "/sites/all/modules",
+            "match": "prefix",
+            "class": "drupal"
+        },
+        {
+            "pattern": "/sites/default/files",
+            "match": "prefix",
+            "class": "drupal"
+        },
+        {
+            "pattern": "/update.php",
+            "match": "exact",
+            "class": "drupal"
+        },
+        {
+            "pattern": ".bak",
+            "match": "extension",
+            "class": "editor-junk"
+        },
+        {
+            "pattern": ".orig",
+            "match": "extension",
+            "class": "editor-junk"
+        },
+        {
+            "pattern": ".swp",
+            "match": "extension",
+            "class": "editor-junk"
+        },
+        {
+            "pattern": "/administrator/index.php",
+            "match": "exact",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/administrator/manifests",
+            "match": "prefix",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/components/com_",
+            "match": "prefix",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/htaccess.txt",
+            "match": "exact",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/modules/mod_",
+            "match": "prefix",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/plugins/system",
+            "match": "prefix",
+            "class": "joomla"
+        },
+        {
+            "pattern": "/artisan",
+            "match": "exact",
+            "class": "laravel",
+            "note": "exact, not substring \u2014 /artisan-bakker is a plausible content slug"
+        },
+        {
+            "pattern": "/bootstrap/cache/",
+            "match": "prefix",
+            "class": "laravel"
+        },
+        {
+            "pattern": "/storage/framework/",
+            "match": "prefix",
+            "class": "laravel"
+        },
+        {
+            "pattern": "/storage/logs/",
+            "match": "prefix",
+            "class": "laravel"
+        },
+        {
+            "pattern": "/app/etc/local.xml",
+            "match": "exact",
+            "class": "magento"
+        },
+        {
+            "pattern": "/downloader",
+            "match": "exact",
+            "class": "magento"
+        },
+        {
+            "pattern": "/downloader/",
+            "match": "prefix",
+            "class": "magento"
+        },
+        {
+            "pattern": "/js/mage/",
+            "match": "prefix",
+            "class": "magento"
+        },
+        {
+            "pattern": "/skin/adminhtml/",
+            "match": "prefix",
+            "class": "magento"
+        },
+        {
+            "pattern": "/var/export/",
+            "match": "prefix",
+            "class": "magento"
+        },
+        {
+            "pattern": "/admin.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/debug.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/i.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/info.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/login.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/php.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/phpinfo.php",
+            "match": "extension",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/pi.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/test.php",
+            "match": "exact",
+            "class": "php-probe"
+        },
+        {
+            "pattern": "/cgi-bin",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/cgi-bin/",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/cpanel",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/cpanel/",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/fcgi-bin",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/fcgi-bin/",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/manager/html",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/manager/status",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/plesk",
+            "match": "exact",
+            "class": "server-admin",
+            "note": "segment, not substring \u2014 /pleskens (surname) is a plausible slug"
+        },
+        {
+            "pattern": "/plesk/",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/server-info",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/server-status",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/webmin",
+            "match": "exact",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/webmin/",
+            "match": "prefix",
+            "class": "server-admin"
+        },
+        {
+            "pattern": "/~",
+            "match": "prefix",
+            "class": "server-admin",
+            "note": "unix userdir probes (/~root); was a bare ~ substring matching ANY tilde"
+        },
+        {
+            "pattern": "/0x.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/adminer.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/alfa-rex",
+            "match": "exact",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/alfa-rex/",
+            "match": "prefix",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/alfacgiapi",
+            "match": "exact",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/alfacgiapi/",
+            "match": "prefix",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/b374k",
+            "match": "exact",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/b374k/",
+            "match": "prefix",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/c99.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/eval-stdin.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/filesman",
+            "match": "exact",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/filesman/",
+            "match": "prefix",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/indoxploit",
+            "match": "exact",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/indoxploit/",
+            "match": "prefix",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/leaf.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/mini.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/r57.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/shell.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/webadmin.php",
+            "match": "extension",
+            "class": "webshell"
+        },
+        {
+            "pattern": "/wso.php",
+            "match": "extension",
+            "class": "webshell",
+            "note": "matching is case-insensitive; also covers WSO.php"
+        },
+        {
+            "pattern": "/wp-admin",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-config",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-content",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-cron.php",
+            "match": "exact",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-includes",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-json",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-load.php",
+            "match": "exact",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-login",
+            "match": "prefix",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-settings.php",
+            "match": "exact",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/wp-trackback.php",
+            "match": "exact",
+            "class": "wordpress"
+        },
+        {
+            "pattern": "/xmlrpc.php",
+            "match": "exact",
+            "class": "wordpress"
+        }
+    ]
+}

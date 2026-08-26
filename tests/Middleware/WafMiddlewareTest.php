@@ -807,4 +807,54 @@ class WafMiddlewareTest extends TestCase
         $method->setAccessible(true);
         return $method->invokeArgs($this->middleware, $args);
     }
+
+    // ========================================================================
+    // 1.5.0 default-behaviour guards (waf#4 / waf#5)
+    // ========================================================================
+
+    /**
+     * The shipped default for soft_rate_limit_enabled must be FALSE — it usleep()s
+     * inside the FPM worker (waf#4). A regression to true silently reintroduces the
+     * worker-exhaustion amplifier, so pin it against the actual property default.
+     */
+    public function testSoftRateLimitDisabledByDefault(): void
+    {
+        $rc = new \ReflectionClass(\Restruct\SilverStripe\Waf\Middleware\WafMiddleware::class);
+        $defaults = $rc->getDefaultProperties();
+        $this->assertFalse(
+            $defaults['soft_rate_limit_enabled'],
+            'soft_rate_limit_enabled must default false (waf#4: worker-held usleep)'
+        );
+    }
+
+    /**
+     * Verified-bot rate-limit exemption ships on, and its signatures pair a UA-claim
+     * regex with rDNS parent domains (never UA alone — that is the spoof waf#4 is about).
+     */
+    public function testVerifiedBotExemptionShipsConfigured(): void
+    {
+        $rc = new \ReflectionClass(\Restruct\SilverStripe\Waf\Middleware\WafMiddleware::class);
+        $defaults = $rc->getDefaultProperties();
+        $this->assertTrue($defaults['rate_limit_exempt_verified_bots']);
+        $sigs = $defaults['verified_bot_signatures'];
+        $this->assertArrayHasKey('/googlebot/i', $sigs);
+        $this->assertContains('googlebot.com', $sigs['/googlebot/i']);
+        foreach ($sigs as $pattern => $domains) {
+            $this->assertSame('/', $pattern[0], "signature key must be a regex: $pattern");
+            $this->assertNotEmpty($domains, "signature $pattern must carry rDNS domains, not UA-only");
+        }
+    }
+
+    /**
+     * The empty-UA pattern (/^$/i) must NOT be in the shipped config default blocklist
+     * (waf#5: it silently 403s legitimate webhook/monitoring callers). Sites opt in.
+     */
+    public function testEmptyUserAgentNotBlockedByDefaultConfig(): void
+    {
+        $yaml = file_get_contents(dirname(__DIR__, 2) . '/_config/config.yml');
+        // The active (uncommented) blocked_user_agents list must not contain /^$/i
+        $active = preg_replace('/^\s*#.*$/m', '', $yaml);
+        $this->assertStringNotContainsString("'/^\$/i'", $active,
+            'empty-UA block must be commented out of shipped defaults (waf#5)');
+    }
 }

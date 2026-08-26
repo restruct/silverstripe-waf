@@ -68,100 +68,6 @@ if (getenv('WAF_EARLY_BAN') === 'false') {
     $earlyBanConfig['enabled'] = true;
 }
 
-// ============================================================================
-// BLOCKED PATH PATTERNS (organized by category)
-// ============================================================================
-
-$blockedPaths = [
-    // WordPress probes
-    '/wp-admin', '/wp-login', '/wp-content', '/wp-includes',
-    '/xmlrpc.php', '/wp-config', '/wp-cron.php', '/wp-json',
-    '/wp-load.php', '/wp-settings.php', '/wp-trackback.php',
-
-    // Joomla probes
-    '/administrator/index.php', '/administrator/manifests',
-    '/components/com_', '/modules/mod_', '/plugins/system',
-    '/htaccess.txt',
-
-    // Drupal probes
-    '/sites/default/files', '/sites/all/modules',
-    '/misc/drupal.js', '/core/install.php',
-    '/update.php', '/cron.php',
-
-    // Magento probes
-    '/downloader/', '/app/etc/local.xml', '/var/export/',
-    '/skin/adminhtml/', '/js/mage/',
-
-    // Laravel probes
-    '/storage/logs/', '/bootstrap/cache/', '/.env.backup',
-    '/artisan', '/storage/framework/',
-
-    // PHP backdoors/webshells
-    '/eval-stdin.php', '/alfacgiapi', '/alfa-rex',
-    '/shell.php', '/c99.php', '/r57.php', '/wso.php',
-    '/b374k', '/webadmin.php', '/FilesMan',
-    '/WSO.php', '/mini.php', '/leaf.php',
-    '/indoxploit', '/adminer.php', '/0x.php',
-
-    // Config/sensitive files
-    '/.env', '/.git', '/.svn', '/.hg',
-    '/.htpasswd', '/.htaccess', '/.DS_Store',
-    '/config.php', '/configuration.php', '/LocalSettings.php',
-    '/web.config', '/settings.php', '/config.inc.php',
-    '/db.php', '/database.php', '/conn.php', '/connect.php',
-    '/config.yml', '/config.yaml', '/parameters.yml',
-    '/.aws/', '/.ssh/', '/.bash_history',
-    '/id_rsa', '/id_dsa', '/.npmrc', '/.dockerenv',
-    '/composer.json', '/composer.lock', '/package.json',
-    '/Gemfile', '/Gemfile.lock', '/Rakefile',
-    '/.travis.yml', '/.gitlab-ci.yml', '/Jenkinsfile',
-    '/phpunit.xml', '/phpcs.xml', '/.phpcs.xml',
-    '/codeception.yml', '/behat.yml',
-
-    // Env config variants (not caught by /.env — .env as file extension)
-    'config.env', 'stripe.env',
-    '/env.js', '/env.backup', '/__env.js',
-
-    // Build tool / framework dev probes
-    '/@vite/', '/.vite/',
-    '/node_modules/',
-    '/asset-manifest.json',
-
-    // Database tools
-    '/phpmyadmin', '/pma/', '/myadmin/', '/mysql/',
-    '/adminer', '/dbadmin/', '/phpMyAdmin/',
-    '/sql/', '/database/', '/db/',
-
-    // Server management
-    '/manager/html', '/manager/status',
-    '/server-status', '/server-info',
-    '/cgi-bin/', '/fcgi-bin/',
-    '/cpanel', '/plesk', '/webmin',
-
-    // Common scanner paths
-    '/admin.php', '/login.php', '/test.php', '/info.php',
-    '/phpinfo.php', '/i.php', '/pi.php', '/php.php',
-    '/debug.php', '/console/', '/telescope/',
-    '/_profiler/', '/_wdt/', '/elmah.axd',
-    '/trace.axd', '/glimpse.axd',
-
-    // Backup files
-    '.bak', '.backup', '.old', '.orig',
-    '.save', '.swp', '.tmp', '~',
-    '.sql', '.tar', '.tar.gz', '.zip',
-    '.rar', '.7z', '.gz', '.tgz',
-
-    // API/debug endpoints
-    '/api/debug', '/api/test',
-    '/__debug__/', '/_debug/', '/debug/',
-    '/actuator/', '/metrics', '/health',
-
-    // Path traversal
-    '../', '..%2f', '..%252f',
-    '%2e%2e/', '%252e%252e/',
-    '..\\', '..%5c', '..%255c',
-    '%c0%ae', '%c1%9c',
-];
 
 // ============================================================================
 // WHITELISTED IPs
@@ -205,13 +111,16 @@ if ($earlyBanConfig['enabled'] && is_dir($wafDataDir)) {
     }
 }
 
-// 1. Path-based blocking
+// 1. Path-based blocking — typed, anchored matching against the URL *path* only.
+//    The query string is deliberately NOT part of the match target (waf#3: the old
+//    unanchored stripos over the full REQUEST_URI blocked legitimate content like
+//    /vacatures/healthcare-* via the '/health' pattern, and site-search query strings).
+//    Inventory + semantics live in _waf_matching.php (shared with tests + exporter).
 if ($config['detect_path_probes']) {
-    $uriLower = strtolower($uri);
-    foreach ($blockedPaths as $pattern) {
-        if (stripos($uriLower, strtolower($pattern)) !== false) {
-            wafLogAndBlock('path_probe', $pattern, $ip, $uri, $userAgent);
-        }
+    require_once __DIR__ . '/_waf_matching.php';
+    $matched = wafMatchBlockedPath($uriPath);
+    if ($matched !== null) {
+        wafLogAndBlock('path_probe', $matched['pattern'], $ip, $uri, $userAgent);
     }
 }
 
