@@ -41,7 +41,7 @@ Slows down requests as they approach the hard limit. Discourages bots while allo
 ```yaml
 Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   soft_rate_limit_threshold: 50   # % of hard limit where delays start
-  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds
+  # soft_rate_limit_max_delay REMOVED in 1.5.3 — soft limiting is now non-blocking (X-RateLimit headers, no delay)
 ```
 
 **Behavior with default 150 req/min limit:**

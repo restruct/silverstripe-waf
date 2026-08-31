@@ -51,17 +51,21 @@ class WafMiddleware implements HTTPMiddleware
     private static int $rate_limit_requests = 150;
     private static int $rate_limit_window = 60;
 
-    // Soft rate limiting (progressive delays before hard block)
-    // ⚠ DEFAULT OFF since 1.5.0 (waf#4): the delay is a usleep() INSIDE the PHP-FPM
-    // worker, so every soft-limited request holds a scarce worker slot for up to
-    // max_delay ms. On a worker-constrained host this amplifies the exact pool-
-    // exhaustion failure it appears to defend against, and fast human users can
-    // trigger it (AJAX-per-keystroke UIs cross the threshold easily). Prefer the
-    // hard 429 (frees the worker immediately, well-behaved clients back off), or
-    // delay-shaping in the webserver (nginx limit_req burst+delay costs no PHP).
+    // Soft rate limiting — NON-BLOCKING backoff signalling (rewritten 1.5.3, waf#4).
+    // When enabled and a client is over `soft_rate_limit_threshold` % of its hard limit
+    // (but not yet at it), the served response carries `X-RateLimit-Limit` /
+    // `X-RateLimit-Remaining` headers so well-behaved clients can self-throttle BEFORE
+    // hitting the hard 429. It NEVER delays or holds the request.
+    //
+    // ⚠ REMOVED in 1.5.3: the previous implementation usleep()'d inside the PHP-FPM
+    // worker (up to `soft_rate_limit_max_delay` ms), holding a scarce worker slot and
+    // AMPLIFYING the pool-exhaustion it appeared to defend against — a fast human on an
+    // AJAX-per-keystroke UI could trip it, and an attacker could use it to pin workers.
+    // A worker-per-request model (PHP-FPM) cannot "slow" a request without holding it;
+    // rate limiting must REJECT (the hard 429), not delay. `soft_rate_limit_max_delay`
+    // is gone; setting it now has no effect.
     private static bool $soft_rate_limit_enabled = false;
-    private static int $soft_rate_limit_threshold = 50;  // Start delaying at this % of hard limit
-    private static int $soft_rate_limit_max_delay = 3000; // Max delay in milliseconds
+    private static int $soft_rate_limit_threshold = 50;  // % of hard limit at which to emit backoff headers
 
     // Verified-crawler rate-limit exemption (waf#4): search-engine bots verified by
     // FORWARD-CONFIRMED reverse DNS (never by UA string alone — trivially spoofed)
@@ -187,12 +191,23 @@ class WafMiddleware implements HTTPMiddleware
                 return $this->tooManyRequests($request);
             }
 
-            // Soft rate limiting (progressive delay, scales with effective limit)
-            if ($this->config()->get('soft_rate_limit_enabled')) {
-                $this->applySoftRateLimit($requestCount, $effectiveLimit);
-            }
+            // Soft rate limiting — NON-BLOCKING (waf#4): decide whether to attach backoff
+            // headers to the response. Never delays; the hard 429 above is the only reject.
+            $softThreshold = (int) ($effectiveLimit * $this->config()->get('soft_rate_limit_threshold') / 100);
+            $emitBackoffHeaders = $this->config()->get('soft_rate_limit_enabled')
+                && $requestCount > $softThreshold;
 
             $this->recordRequest($ip);
+
+            $response = $delegate($request);
+            if ($emitBackoffHeaders && $response instanceof HTTPResponse) {
+                # Standard informational rate-limit headers so clients can self-throttle
+                # before the hard limit. Safe on any status; no Retry-After on a served
+                # response (that belongs on the 429).
+                $response->addHeader('X-RateLimit-Limit', (string) $effectiveLimit);
+                $response->addHeader('X-RateLimit-Remaining', (string) max(0, $effectiveLimit - $requestCount - 1));
+            }
+            return $response;
         }
 
         // Request passed all checks
@@ -361,41 +376,6 @@ class WafMiddleware implements HTTPMiddleware
      * - 90 requests: 2400ms delay
      * - 99 requests: 2940ms delay
      */
-    protected function applySoftRateLimit(int $requestCount, int $hardLimit): void
-    {
-        $thresholdPercent = $this->config()->get('soft_rate_limit_threshold');
-        $maxDelay = $this->config()->get('soft_rate_limit_max_delay');
-
-        $softThreshold = (int) ($hardLimit * $thresholdPercent / 100);
-
-        // No delay if under threshold
-        if ($requestCount <= $softThreshold) {
-            return;
-        }
-
-        // Calculate progressive delay
-        // Scale from 0 at threshold to max_delay at hard limit
-        $range = $hardLimit - $softThreshold;
-        $excess = $requestCount - $softThreshold;
-        $ratio = min(1.0, $excess / $range);
-
-        $delayMs = (int) ($ratio * $maxDelay);
-
-        if ($delayMs > 0) {
-            // Log soft limiting (at debug level to avoid log spam)
-            if ($delayMs >= 1000) {
-                error_log(sprintf(
-                    '[WAF] SOFT_LIMIT ip=%s requests=%d delay=%dms',
-                    $_SERVER['REMOTE_ADDR'] ?? 'unknown',
-                    $requestCount,
-                    $delayMs
-                ));
-            }
-
-            // Apply delay (usleep takes microseconds)
-            usleep($delayMs * 1000);
-        }
-    }
 
     // ========================================================================
     // Verified-Bot Check (forward-confirmed reverse DNS)

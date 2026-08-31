@@ -52,17 +52,16 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   # ---------------------------------------------------------------------------
   # Soft Rate Limiting (Progressive Delays)
   # ---------------------------------------------------------------------------
-  # Slows down requests as they approach the hard limit.
-  # Discourages bots while allowing legitimate burst traffic.
+  # NON-BLOCKING backoff signalling (rewritten 1.5.3). When over the threshold %, the
+  # served response carries X-RateLimit-Limit / X-RateLimit-Remaining headers so
+  # well-behaved clients self-throttle before the hard 429. It never delays the request.
   #
-  # Example with defaults (threshold 50%, max_delay 3000ms, limit 150):
-  #   75 requests  →  0ms delay (at threshold)
-  #   100 requests →  1000ms delay
-  #   130 requests →  2200ms delay
-  #   150+ requests → blocked (hard limit)
-  soft_rate_limit_enabled: true
-  soft_rate_limit_threshold: 50   # % of hard limit where delays start
-  soft_rate_limit_max_delay: 3000 # Max delay in milliseconds (3 seconds)
+  # ⚠ Before 1.5.3 this usleep()'d inside the PHP-FPM worker (up to 3s), which HELD a
+  # worker slot and amplified pool exhaustion — an availability foot-gun / attack vector,
+  # and it was shipped ON by default here (overriding the code default). Removed. Enabling
+  # is now safe; default is off to keep responses header-clean unless you opt in.
+  soft_rate_limit_enabled: false
+  soft_rate_limit_threshold: 50   # % of hard limit at which to emit backoff headers
 
   # ---------------------------------------------------------------------------
   # Privileged IPs (Elevated Rate Limits)

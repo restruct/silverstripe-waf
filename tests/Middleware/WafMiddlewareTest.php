@@ -813,18 +813,41 @@ class WafMiddlewareTest extends TestCase
     // ========================================================================
 
     /**
-     * The shipped default for soft_rate_limit_enabled must be FALSE — it usleep()s
-     * inside the FPM worker (waf#4). A regression to true silently reintroduces the
-     * worker-exhaustion amplifier, so pin it against the actual property default.
+     * The shipped default for soft_rate_limit_enabled must be FALSE — checked against the
+     * EFFECTIVE config (config()->get), NOT the PHP static. The static was false but the
+     * module's _config/config.yml shipped it TRUE, which overrode it — the usleep was on
+     * by default and the old getDefaultProperties() test missed it entirely (waf#4).
      */
     public function testSoftRateLimitDisabledByDefault(): void
     {
+        // PHP static default must be false...
         $rc = new \ReflectionClass(\Restruct\SilverStripe\Waf\Middleware\WafMiddleware::class);
-        $defaults = $rc->getDefaultProperties();
-        $this->assertFalse(
-            $defaults['soft_rate_limit_enabled'],
-            'soft_rate_limit_enabled must default false (waf#4: worker-held usleep)'
+        $this->assertFalse($rc->getDefaultProperties()['soft_rate_limit_enabled'], 'static default must be false');
+
+        // ...AND the shipped config.yml must not re-enable it. This is the layer the old
+        // getDefaultProperties()-only test missed: config.yml shipped `true`, overriding
+        // the static, so the delay was on by default (waf#4). Check the file directly.
+        $yaml = file_get_contents(dirname(__DIR__, 2) . '/_config/config.yml');
+        $this->assertDoesNotMatchRegularExpression(
+            '/^\s*soft_rate_limit_enabled:\s*true/m',
+            $yaml,
+            'config.yml must not ship soft_rate_limit_enabled: true'
         );
+    }
+
+    /**
+     * The worker-holding usleep() soft-delay is REMOVED (1.5.3, waf#4). Soft limiting is
+     * now non-blocking (X-RateLimit headers only). Pin that the delay method and its
+     * max-delay config are gone so a delay can never be reintroduced silently.
+     */
+    public function testSoftRateLimitDelayIsRemoved(): void
+    {
+        $this->assertFalse(
+            method_exists(\Restruct\SilverStripe\Waf\Middleware\WafMiddleware::class, 'applySoftRateLimit'),
+            'applySoftRateLimit() (the usleep worker-holder) must not exist'
+        );
+        $src = file_get_contents(dirname(__DIR__, 2) . '/src/Middleware/WafMiddleware.php');
+        $this->assertStringNotContainsString('usleep($', $src, 'no usleep() CALL may remain in the middleware');
     }
 
     /**

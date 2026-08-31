@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.3
+
+### Fixed / Changed
+
+- **Removed the worker-holding soft-rate-limit delay (attack vector).** The soft rate limit
+  `usleep()`'d inside the PHP-FPM worker (up to 3s, scaling from the threshold to the hard limit),
+  so a "soft-limited" request HELD a scarce worker slot — amplifying the pool exhaustion it appeared
+  to defend against. A fast human on an AJAX-per-keystroke UI could trip it, and an attacker could
+  use it to pin workers. **Worse: it shipped ON by default** — `_config/config.yml` set
+  `soft_rate_limit_enabled: true`, overriding the code static (`false`), so the delay was live on
+  every install that didn't explicitly disable it (the 1.5.0 "default off" only changed the static).
+- **Soft rate limiting is now NON-BLOCKING.** When enabled and a client is over
+  `soft_rate_limit_threshold` % of its hard limit, the served response carries standard
+  `X-RateLimit-Limit` / `X-RateLimit-Remaining` headers so well-behaved clients self-throttle before
+  the hard 429 — no delay, no held worker. `soft_rate_limit_max_delay` is removed (inert if set).
+  Default is off (both static and config.yml aligned); enabling is now safe.
+- The default-guard test now checks the **shipped config.yml**, not just the PHP static — the layer
+  the previous test missed.
+
 ## 1.5.2
 
 ### Added
