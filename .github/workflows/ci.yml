@@ -120,8 +120,10 @@ jobs:
           }
           JSON
           # Silverstripe 5 is in security-fixes-only until its April 2027 EOL, and every release
-          # of it is covered by advisory PKSA-pjvm-vnw2-n3m2 (range <6.2.1), which will not be
-          # patched there. Composer therefore refuses to install it under the default policy.
+          # of it is covered by three advisories whose fixes exist only on 6.x, so they will not
+          # be patched there: PKSA-pjvm-vnw2-n3m2 (silverstripe/cms <6.2.1), PKSA-x6tz-s6v3-ynk3
+          # (silverstripe/framework <6.2.2) and PKSA-nksq-cxj8-zb32 (silverstripe/versioned <3.2.1).
+          # Composer therefore refuses to install it under the default policy.
           # Blocking is disabled HERE ONLY, in a throwaway CI host project.
           composer config policy.advisories.block false
           if [ -n "${{ matrix.queuedjobs }}" ]; then
