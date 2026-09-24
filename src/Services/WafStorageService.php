@@ -173,14 +173,17 @@ class WafStorageService
         $mode = $this->getStorageMode();
 
         if ($mode === 'file') {
+            # mb_substr, as in the database mode: a byte cut (substr) of a multibyte value splits the
+            # last character, json_encode() then fails on the invalid UTF-8 and the entry is lost
+            # (appendToBlockedLog writes a blank line instead).
             $this->appendToBlockedLog([
                 'timestamp' => time(),
                 'datetime' => date('Y-m-d H:i:s'),
                 'ip' => $ip,
-                'uri' => substr($uri, 0, 255),
-                'user_agent' => substr($userAgent, 0, 255),
+                'uri' => mb_substr($uri, 0, 255),
+                'user_agent' => mb_substr($userAgent, 0, 255),
                 'reason' => $reason,
-                'detail' => substr($detail, 0, 255),
+                'detail' => mb_substr($detail, 0, 255),
             ]);
         } elseif ($mode === 'database') {
             $this->saveBlockedRequestToDatabase($ip, $uri, $userAgent, $reason, $detail);

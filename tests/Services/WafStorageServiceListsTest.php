@@ -151,6 +151,47 @@ class WafStorageServiceListsTest extends SapphireTest
         $this->assertSame(str_repeat('é', 255), $log->Detail);
     }
 
+    /**
+     * File mode: a multibyte blocked-request URI over 255 characters must be logged as its first 255.
+     * 300 x 'é' is 600 bytes: a byte cut (substr) at 255 splits the 128th character, json_encode()
+     * fails on the invalid UTF-8 and the JSONL entry is lost (a blank line is written instead).
+     */
+    public function testFileModeLongMultibyteBlockedUriIsLogged(): void
+    {
+        $service = $this->service('file');
+        $service->logBlockedRequest('203.0.113.18', str_repeat('é', 300), 'curl', 'blocked_pattern', 'probe');
+
+        $blocked = $service->getBlockedRequests(10);
+        $this->assertSame(['203.0.113.18'], $blocked->column('IpAddress'), 'entry should be in the JSONL log');
+        $this->assertSame(str_repeat('é', 255), $blocked->first()->Uri);
+    }
+
+    /**
+     * File mode: a multibyte blocked-request user agent over 255 characters must be logged as its first 255.
+     */
+    public function testFileModeLongMultibyteBlockedUserAgentIsLogged(): void
+    {
+        $service = $this->service('file');
+        $service->logBlockedRequest('203.0.113.19', '/xmlrpc.php', str_repeat('é', 300), 'blocked_pattern', 'probe');
+
+        $blocked = $service->getBlockedRequests(10);
+        $this->assertSame(['203.0.113.19'], $blocked->column('IpAddress'), 'entry should be in the JSONL log');
+        $this->assertSame(str_repeat('é', 255), $blocked->first()->UserAgent);
+    }
+
+    /**
+     * File mode: a multibyte blocked-request detail over 255 characters must be logged as its first 255.
+     */
+    public function testFileModeLongMultibyteBlockedDetailIsLogged(): void
+    {
+        $service = $this->service('file');
+        $service->logBlockedRequest('203.0.113.20', '/xmlrpc.php', 'curl', 'blocked_pattern', str_repeat('é', 300));
+
+        $blocked = $service->getBlockedRequests(10);
+        $this->assertSame(['203.0.113.20'], $blocked->column('IpAddress'), 'entry should be in the JSONL log');
+        $this->assertSame(str_repeat('é', 255), $blocked->first()->Detail);
+    }
+
     public function testFileModeListsAreArrayListsOfTheRunningMajor(): void
     {
         $service = $this->service('file');
