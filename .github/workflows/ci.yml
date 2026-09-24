@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # One line spans both majors (composer.json: framework ^5.0 || ^6.0, php ^8.1), so each
+          # One line spans both majors (composer.json: framework ^5.4 || ^6, php ^8.1), so each
           # major is tested at the oldest and newest PHP it is used with here. composer.json is the
           # source of truth for the range; this matrix must follow it.
           - silverstripe: '5'

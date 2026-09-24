@@ -3,7 +3,11 @@
 ## 1.5.x to 1.6.0
 
 1.6.0 keeps one line for Silverstripe 5 and 6 (`composer.json` is the source of truth: framework
-`^5.0 || ^6.0`, PHP `^8.1`). Most sites need to do nothing beyond updating.
+`^5.4 || ^6`, PHP `^8.1`). Most sites need to do nothing beyond updating.
+
+**Silverstripe 5.0 to 5.3 are no longer allowed.** The framework floor is now 5.4, the only Silverstripe 5
+minor this release is tested on (the admin screen uses list filter syntax whose first 5.x minor is not
+known). A site on 5.0-5.3 stays on 1.5.x until it upgrades the framework.
 
 Note on constraints: a project requiring `~1.5.1` or `~1.5.2` means `>=1.5.x <1.6`, so it will **not**
 receive 1.6.0 until the constraint is widened (for example to `^1.5`).

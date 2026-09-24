@@ -42,6 +42,8 @@ See [UPGRADING.md](UPGRADING.md).
 
 ### Changed
 
+- **The framework floor is `^5.4 || ^6`** (was `^5.0 || ^6.0`). Silverstripe 5.4 is the only 5.x minor this
+  release is tested on; a site on 5.0-5.3 stays on 1.5.x. See [UPGRADING.md](UPGRADING.md).
 - `silverstripe/admin` is now declared in `require` (`^2 || ^3`); `WafAdmin` extends `LeftAndMain`, so it
   was always needed and only ever arrived through a recipe. `symbiote/silverstripe-queuedjobs` and
   `silverstripe/errorpage` are listed in `suggest`.

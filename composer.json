@@ -19,7 +19,7 @@
     ],
     "require": {
         "php": "^8.1",
-        "silverstripe/framework": "^5.0 || ^6.0",
+        "silverstripe/framework": "^5.4 || ^6",
         "silverstripe/admin": "^2 || ^3",
         "psr/simple-cache": "^3.0"
     },

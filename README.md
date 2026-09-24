@@ -22,13 +22,13 @@ PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability sc
 ## Requirements
 
 - PHP 8.1+ (Silverstripe 6 itself needs 8.3+)
-- Silverstripe 5 or 6, with `silverstripe/admin`
+- Silverstripe 5.4+ or 6, with `silverstripe/admin`
 - Optional: `symbiote/silverstripe-queuedjobs` (scheduled blocklist sync), `silverstripe/errorpage`
   (styled 429 page)
 
 | Branch | Module version | Silverstripe | PHP |
 |--------|----------------|--------------|-----|
-| `main` | `1.6.x` | `^5 \|\| ^6` | `^8.1` |
+| `main` | `1.6.x` | `^5.4 \|\| ^6` | `^8.1` |
 | (tags only) | `1.0` - `1.5.x` | `^5` (declared `^5 \|\| ^6`, but did not run on 6) | `^8.1` |
 | `ss3` | `0.x` | `~3.1` | `>=7.4` |
 
