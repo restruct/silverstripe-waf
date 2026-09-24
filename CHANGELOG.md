@@ -45,6 +45,11 @@ See [UPGRADING.md](UPGRADING.md).
 
 - **The framework floor is `^5.4 || ^6`** (was `^5.0 || ^6.0`). Silverstripe 5.4 is the only 5.x minor this
   release is tested on; a site on 5.0-5.3 stays on 1.5.x. See [UPGRADING.md](UPGRADING.md).
+- **The `Restruct\SilverStripe\Waf\EarlyFilter:` block in `_config/config.yml` is commented out**, and
+  `docs/extending.md` no longer tells sites to add patterns there. Nothing ever read it (there is no such
+  class, and the early filter runs before the framework), so a pattern added there never blocked
+  anything. The blocked-path inventory is code-level, in `_waf_matching.php`. CI now runs the config
+  audit on both majors and fails on any config key of this module that no class declares.
 - `silverstripe/admin` is now declared in `require` (`^2 || ^3`); `WafAdmin` extends `LeftAndMain`, so it
   was always needed and only ever arrived through a recipe. `symbiote/silverstripe-queuedjobs` and
   `silverstripe/errorpage` are listed in `suggest`.

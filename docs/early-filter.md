@@ -26,7 +26,10 @@ WAF_EARLY_FILTER_DISABLED=true
 
 ## Blocked Patterns
 
-The early filter blocks these URL patterns by default (substring match, case-insensitive):
+The early filter blocks URL paths like these by default. Since 1.5.0 matching is typed and anchored
+against the decoded URL path (not a substring match over the whole URI), and the inventory is
+code-level, not YAML config: the authoritative list is `wafBlockedPathEntries()` in `_waf_matching.php`,
+which this summary may lag. See [Extending](extending.md#custom-blocked-patterns).
 
 **WordPress probes:**
 `/wp-admin`, `/wp-login`, `/wp-content`, `/wp-includes`, `/xmlrpc.php`, `/wp-config`

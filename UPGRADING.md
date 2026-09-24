@@ -46,6 +46,12 @@ You are affected only if your project extends or calls these directly:
   `SyncBlocklistsTask::DESCRIPTION` constant and `lang/en.yml`. The task body moved from `run()` into
   `sync(callable $writeLine)`.
 
+### If you added patterns under `Restruct\SilverStripe\Waf\EarlyFilter`
+
+They never took effect, in any version: nothing reads that config. 1.6.0 comments the module's own copy
+out. Remove the keys from your project config, and block the paths in the web server or a project
+middleware instead (see [docs/extending.md](docs/extending.md#custom-blocked-patterns)).
+
 ### Dependencies
 
 `silverstripe/admin` is now a declared requirement. Every install already had it (the admin screen

@@ -201,6 +201,26 @@ jobs:
             vendor/bin/sake db:build --flush
           fi
 
+      - name: Audit this module's YAML config
+        # Up to 1.5.x the module shipped config for a class that does not exist (EarlyFilter), and
+        # the docs told sites to add patterns there; nothing ever read it. config:audit lists every
+        # config key that no class declares as a private static. It exits 0 whatever it finds and
+        # also lists other modules' keys, so this step fails only on this module's namespace.
+        # Limit: it does not report every scalar key (of the old EarlyFilter block it listed the two
+        # array keys only), so it catches a stray block, not every stray key.
+        working-directory: app-host
+        run: |
+          if [ "${{ matrix.silverstripe }}" = "5" ]; then
+            php vendor/silverstripe/framework/cli-script.php dev/config/audit flush=1 > config-audit.txt
+          else
+            vendor/bin/sake config:audit --flush > config-audit.txt
+          fi
+          cat config-audit.txt
+          if grep -i 'restruct\\silverstripe\\waf' config-audit.txt; then
+            echo "::error::restruct/silverstripe-waf sets config that no class declares (listed above)"
+            exit 1
+          fi
+
   lint:
     name: Lint PHP ${{ matrix.php }}
     runs-on: ubuntu-latest
