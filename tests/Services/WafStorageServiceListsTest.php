@@ -79,6 +79,24 @@ class WafStorageServiceListsTest extends SapphireTest
         $this->assertSame(255, strlen($ban->Reason));
     }
 
+    /**
+     * A blocked-request reason longer than its Varchar(50) must still be logged, cut to 50 characters
+     * on a character boundary. Silverstripe 6 validates Varchar length on write and throws; the service
+     * swallows DB exceptions, so without truncation the log row was lost. The reason is multibyte so a
+     * byte-based substr (which would split a character and not yield these 50 characters) also fails.
+     */
+    public function testDatabaseModeLongMultibyteBlockedReasonIsPersisted(): void
+    {
+        $service = $this->service('database');
+        # 60 characters, 120 bytes: each 'é' is two bytes in UTF-8.
+        $reason = str_repeat('é', 60);
+        $service->logBlockedRequest('203.0.113.13', '/xmlrpc.php', 'curl', $reason, 'probe');
+
+        $log = BlockedRequest::get()->filter('IpAddress', '203.0.113.13')->first();
+        $this->assertNotNull($log, 'blocked request with a 60-character reason should be stored');
+        $this->assertSame(str_repeat('é', 50), $log->Reason);
+    }
+
     public function testFileModeListsAreArrayListsOfTheRunningMajor(): void
     {
         $service = $this->service('file');

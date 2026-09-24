@@ -432,7 +432,10 @@ class WafStorageService
             $log->IpAddress = $ip;
             $log->Uri = substr($uri, 0, 255);
             $log->UserAgent = substr($userAgent, 0, 255);
-            $log->Reason = $reason;
+            # Reason is Varchar(50). Silverstripe 6 validates field length (in characters) on write
+            # and throws, which the catch below swallows - silently losing the log row. mb_substr so
+            # a multibyte reason is cut on a character boundary, never mid-sequence.
+            $log->Reason = mb_substr($reason, 0, 50);
             $log->Detail = substr($detail, 0, 255);
             $log->write();
         } catch (\Exception $e) {
