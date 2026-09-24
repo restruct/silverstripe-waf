@@ -20,10 +20,15 @@
     "require": {
         "php": "^8.1",
         "silverstripe/framework": "^5.0 || ^6.0",
+        "silverstripe/admin": "^2 || ^3",
         "psr/simple-cache": "^1.0 || ^2.0 || ^3.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^9.5"
+        "silverstripe/recipe-testing": "^3 || ^4"
+    },
+    "suggest": {
+        "symbiote/silverstripe-queuedjobs": "Schedules the blocklist sync every 6 hours (SyncBlocklistsJob); without it, run the sync task from cron",
+        "silverstripe/errorpage": "Serves a styled 429 page when use_styled_error_pages is on; without it the 429 is plain text"
     },
     "autoload": {
         "psr-4": {
@@ -48,5 +53,11 @@
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/restruct"
+        }
+    ]
 }
