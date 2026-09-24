@@ -47,6 +47,7 @@ See [UPGRADING.md](UPGRADING.md).
 - Behavioural tests on a booted app (validation, schema, task on each major's API, storage lists in every
   mode, middleware request handling, admin form rendering), a CI workflow testing Silverstripe 5 and 6
   with and without queuedjobs, and `.gitattributes` keeping tests out of dist installs.
+
 ## 1.5.3
 
 ### Fixed / Changed
