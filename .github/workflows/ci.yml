@@ -138,9 +138,10 @@ jobs:
           <?xml version="1.0" encoding="UTF-8"?>
           <!-- Warning-to-error escalation is the RUNNER's behaviour and differs by PHPUnit
                major: 9 (SS5) converts warnings by default, 11 (SS6) has no such attribute.
-               failOnWarning is pinned so a warning behaves identically on every leg. -->
+               failOnWarning is pinned so a warning behaves identically on every leg.
+               failOnEmptyTestSuite: a suite that finds no tests fails instead of passing. -->
           <phpunit bootstrap="vendor/silverstripe/framework/tests/bootstrap.php" colors="true"
-                   failOnWarning="true">
+                   failOnWarning="true" failOnEmptyTestSuite="true">
               <testsuites>
                   <testsuite name="consumer">
                       <directory>app/tests</directory>
@@ -176,18 +177,21 @@ jobs:
 
       - name: Run tests
         # Flushing is per PHPUnit major, and the two mechanisms are NOT interchangeable:
-        # - SS6 / PHPUnit 11 ignores a `flush=1` argument; SS_PHPUNIT_FLUSH=1 flushes instead.
+        # - SS6 / PHPUnit 11 treats a bare `flush=1` argument as a test PATH (and fails on it);
+        #   SS_PHPUNIT_FLUSH=1 flushes instead.
         # - SS5 / PHPUnit 9: SS_PHPUNIT_FLUSH is inert on framework 5, so the flush is the
         #   path-first `flush=1` argument (never after --testsuite, where it does nothing).
         # A fresh runner has no manifest cache either, but the explicit flush is what is relied on.
+        # --fail-on-empty-test-suite (PHPUnit 9.6 and 11): a path that finds no tests, such as a
+        # dist-style install without /tests, fails the leg instead of passing with nothing run.
         working-directory: app-host
         run: |
           if [ "${{ matrix.silverstripe }}" = "5" ]; then
-            vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests flush=1
-            vendor/bin/phpunit app/tests flush=1
+            vendor/bin/phpunit --fail-on-empty-test-suite vendor/restruct/silverstripe-waf/tests flush=1
+            vendor/bin/phpunit --fail-on-empty-test-suite app/tests flush=1
           else
-            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests
-            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit app/tests
+            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit --fail-on-empty-test-suite vendor/restruct/silverstripe-waf/tests
+            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit --fail-on-empty-test-suite app/tests
           fi
 
       - name: Boot the app and build the database
