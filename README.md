@@ -1,5 +1,8 @@
 # Silverstripe WAF
 
+*Maintained by [Restruct](https://github.com/restruct). If this module saves you time, you can
+[support ongoing maintenance](https://github.com/sponsors/restruct).*
+
 PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability scanners, malicious bots, and bad IPs without requiring a separate WAF service.
 
 ## Features
@@ -8,7 +11,7 @@ PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability sc
 - **Early Filter Banning** — Self-contained fail2ban alternative, bans repeat offenders at the PHP level
 - **Pattern-based blocking** — WordPress probes, webshells, config file access, path traversal
 - **IP Blocklists** — Auto-sync from threat intelligence feeds (FireHOL, Binary Defense)
-- **Rate Limiting** — Hard limits with soft progressive delays
+- **Rate Limiting** — Hard limits (429), with optional non-blocking backoff headers before the limit
 - **Privileged IPs** — Elevated rate limits for trusted IPs (still subject to all security checks)
 - **Auto-banning** — Automatically ban IPs after repeated violations
 - **ModelAdmin Guard** — Prevents PHP errors from scanner probes on admin URLs
@@ -18,14 +21,27 @@ PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability sc
 
 ## Requirements
 
-- PHP 8.1+
-- Silverstripe Framework 5.0+ or 6.0+
+- PHP 8.1+ (Silverstripe 6 itself needs 8.3+)
+- Silverstripe 5 or 6, with `silverstripe/admin`
+- Optional: `symbiote/silverstripe-queuedjobs` (scheduled blocklist sync), `silverstripe/errorpage`
+  (styled 429 page)
+
+| Branch | Module version | Silverstripe | PHP |
+|--------|----------------|--------------|-----|
+| `main` | `1.6.x` | `^5 \|\| ^6` | `^8.1` |
+| (tags only) | `1.0` - `1.5.x` | `^5` (declared `^5 \|\| ^6`, but did not run on 6) | `^8.1` |
+| `ss3` | `0.x` | `~3.1` | `>=7.4` |
+
+`composer.json` is the source of truth; this table is a convenience copy. The Silverstripe 5 range is
+maintained until Silverstripe 5 reaches end of life in April 2027. Upgrading from 1.5.x: see
+[UPGRADING.md](UPGRADING.md).
 
 ## Installation
 
 ```bash
 composer require restruct/silverstripe-waf
-vendor/bin/sake dev/build flush=1
+vendor/bin/sake dev/build flush=1        # Silverstripe 5
+vendor/bin/sake db:build --flush         # Silverstripe 6
 ```
 
 ### Enable Early Filter (Recommended)
@@ -85,6 +101,18 @@ Works in all storage modes — no database required for `file` mode.
 | [Fail2ban](docs/fail2ban.md) | Fail2ban integration + Laravel Forge setup |
 | [Performance](docs/performance.md) | TTFB benchmarks, memory footprint, optimizations |
 | [Extending](docs/extending.md) | Custom patterns, blocklist sources, environment variables, testing |
+
+## Running the tests
+
+The suites need a booted Silverstripe app, so run them from a host project that installs this module
+as a symlinked path repository (`/tests` is export-ignored, so a dist install contains no tests):
+
+```bash
+vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests flush=1          # Silverstripe 5
+SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests  # Silverstripe 6
+```
+
+`.github/workflows/ci.yml` builds exactly such a host for each supported major.
 
 ## Complementary Module
 

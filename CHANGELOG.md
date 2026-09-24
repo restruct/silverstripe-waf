@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.6.0
+
+Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
+declared `silverstripe/framework: ^5.0 || ^6.0` since 1.0, but on Silverstripe 6 the module fataled on
+the first flush. It is now tested on both majors: 156 tests, same count on Silverstripe 5.4 and 6.2.
+See [UPGRADING.md](UPGRADING.md).
+
+### Fixed
+
+- **`SyncBlocklistsJob` no longer fatals the application when `symbiote/silverstripe-queuedjobs` is not
+  installed** (waf#6). Declaring a subclass of a missing parent fataled every flush (deploy, `dev/build`,
+  `?flush=1`, cold cache) on both majors, because the config layer autoloads every class in the manifest.
+  The YAML `Only: moduleexists` guard does not prevent that; a file-level guard now does.
+- **Silverstripe 6: the module loads and runs.** `PrivilegedIp` (a `validate()` return type from the SS5
+  namespace) and `SyncBlocklistsTask` (the old BuildTask API) fataled at class load, i.e. on every flush;
+  `WafStorageService` failed on first use of its lists (ArrayList/ArrayData moved to `SilverStripe\Model`).
+- **Silverstripe 6: `sake db:build` no longer aborts on a site with `silverstripe/errorpage`.** The
+  middleware passed a null client IP (an in-process request, as ErrorPage makes when writing its static
+  pages) to string-typed checks, a TypeError. On Silverstripe 5 the same TypeError is reachable by any
+  request that reaches the middleware without an IP (the Silverstripe 5 database build did not trigger
+  it). Requests without a client IP are now passed through.
+- **Database storage mode: the CMS admin and `getActiveBans()` / `getBlockedRequests()` no longer throw
+  a TypeError** (both majors). They returned a DataList from methods typed `: ArrayList`.
+- **Silverstripe 6: a manual ban with a reason over 255 characters is no longer silently lost** in
+  database mode (field-length validation threw and the exception was swallowed). The reason is truncated.
+- **The early-filter data-provider tests now run on PHPUnit 10+.** They were refused by PHPUnit 11, so
+  72 test cases silently never ran on Silverstripe 6.
+
+### Changed
+
+- `silverstripe/admin` is now declared in `require` (`^2 || ^3`); `WafAdmin` extends `LeftAndMain`, so it
+  was always needed and only ever arrived through a recipe. `symbiote/silverstripe-queuedjobs` and
+  `silverstripe/errorpage` are listed in `suggest`.
+- `SyncBlocklistsTask` serves both BuildTask APIs from one class. On Silverstripe 6 run it as
+  `vendor/bin/sake tasks:waf-sync-blocklists`; on Silverstripe 5 `dev/tasks/waf-sync-blocklists` is unchanged.
+- `PrivilegedIp` validates through `PrivilegedIpValidationExtension` (applied by the model itself) calling
+  the new `PrivilegedIp::validateIpAndFactor()`, instead of overriding `validate()`.
+- `WafStorageService::getActiveBans()` and `getBlockedRequests()` declare an `SS_List` return type (a
+  union of both majors' SS_List) instead of `ArrayList`.
+- `require-dev` is `silverstripe/recipe-testing ^3 || ^4` instead of a bare `phpunit/phpunit ^9.5`.
+- `composer.json` carries a `funding` entry.
+
+### Added
+
+- Behavioural tests on a booted app (validation, schema, task on each major's API, storage lists in every
+  mode, middleware request handling, admin form rendering), a CI workflow testing Silverstripe 5 and 6
+  with and without queuedjobs, and `.gitattributes` keeping tests out of dist installs.
 ## 1.5.3
 
 ### Fixed / Changed
