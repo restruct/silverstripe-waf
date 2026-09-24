@@ -13,7 +13,7 @@ use SilverStripe\ORM\DataObject;
 use SilverStripe\ORM\FieldType\DBBoolean;
 use SilverStripe\ORM\FieldType\DBFloat;
 use SilverStripe\ORM\FieldType\DBVarchar;
-use SilverStripe\ORM\ValidationResult;
+use Restruct\SilverStripe\Waf\Extensions\PrivilegedIpValidationExtension;
 use SilverStripe\Security\Permission;
 
 /**
@@ -43,6 +43,11 @@ class PrivilegedIp extends DataObject
         'Factor'    => DBFloat::class,                # Rate limit multiplier (2.0 = double the base limit)
         'Tier'      => DBVarchar::class . '(100)',    # Group name ("Office", "Partner", "Monitoring")
         'IsActive'  => DBBoolean::class,              # Toggle without deleting
+    ];
+
+    # Validation runs through DataObject::validate()'s extension hook - see validateIpAndFactor()
+    private static array $extensions = [
+        PrivilegedIpValidationExtension::class,
     ];
 
     private static array $defaults = [
@@ -119,11 +124,23 @@ class PrivilegedIp extends DataObject
         return $options;
     }
 
-    public function validate(): ValidationResult
+    /**
+     * Validate the IP/CIDR and the factor, adding field errors to $result.
+     *
+     * Called from PrivilegedIpValidationExtension, i.e. from DataObject::validate()'s extension
+     * hook, rather than by overriding validate() here. An override cannot be declared for both
+     * Silverstripe majors at once: SS5's validate() has no return type and returns
+     * SilverStripe\ORM\ValidationResult, SS6's is typed `: SilverStripe\Core\Validation\ValidationResult`
+     * and the SS5 class no longer exists there, so any single declaration fatals on one of them.
+     * The hook receives the same result object on both, untyped.
+     *
+     * Before 1.6.0 this was `public function validate(): ValidationResult` calling parent::validate().
+     *
+     * @param \SilverStripe\ORM\ValidationResult|\SilverStripe\Core\Validation\ValidationResult $result
+     */
+    public function validateIpAndFactor($result): void
     {
-        $result = parent::validate();
-
-        $ip = $this->IpAddress;
+        $ip = (string) $this->IpAddress;
 
         # Validate IP or CIDR format
         if (str_contains($ip, '/')) {
@@ -140,8 +157,6 @@ class PrivilegedIp extends DataObject
         if ($this->Factor <= 0) {
             $result->addFieldError('Factor', 'Factor must be greater than 0');
         }
-
-        return $result;
     }
 
     /**
