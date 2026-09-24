@@ -282,6 +282,94 @@ class WafAdminActionsTest extends FunctionalTest
         $this->assertStringContainsString('192.0.2.34', $response->getBody());
     }
 
+    /**
+     * Send a GridField action as a GET, every value (the token included) in the query string: what a
+     * link built from a leaked token, or a prefetcher following one, would send.
+     */
+    private function getGridAction(string $buttonClass, array $data, string $token): HTTPResponse
+    {
+        $buttons = $this->cssParser()->getByXpath($this->buttonXpath($buttonClass));
+        $this->assertCount(1, $buttons, "one button with class $buttonClass");
+        $button = $buttons[0];
+
+        $data[(string) $button['name']] = (string) $button['value'] ?: '1';
+        if (isset($button['data-action-state'])) {
+            $data['ActionState'] = (string) $button['data-action-state'];
+        }
+        $data['SecurityID'] = $token;
+
+        $url = (string) $button['data-url'];
+        $url .= (str_contains($url, '?') ? '&' : '?') . http_build_query($data);
+
+        return $this->get($url);
+    }
+
+    public function testGridUnbanOverGetWithTokenIsRejected(): void
+    {
+        $this->storage()->banIp('192.0.2.35', 3600, 'test');
+        $token = $this->loadAdminToken();
+
+        $response = $this->getGridAction('waf-unban', [], $token);
+
+        $this->assertSame(405, $response->getStatusCode());
+        $this->assertTrue($this->isListedAsBanned('192.0.2.35'), 'still banned');
+
+        # Positive control: the same action as a POST does unban, so the GET was refused for its method
+        $this->get('admin/waf');
+        $response = $this->postGridAction('waf-unban', [], $token);
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertFalse($this->isListedAsBanned('192.0.2.35'), 'unbanned by the POST');
+    }
+
+    public function testGridBanOverGetWithTokenIsRejected(): void
+    {
+        $token = $this->loadAdminToken();
+
+        $response = $this->getGridAction('waf-ban', [GridFieldManualBan::FIELD_IP => '192.0.2.36'], $token);
+
+        $this->assertSame(405, $response->getStatusCode());
+        $this->assertFalse($this->isListedAsBanned('192.0.2.36'), 'not banned');
+    }
+
+    /**
+     * A ban is keyed on the exact string, and PHP reports an IPv6 client in compressed lower case.
+     * A ban typed in another spelling must still block that client.
+     */
+    public function testManualBanStoresTheCanonicalIpv6Spelling(): void
+    {
+        $token = $this->loadAdminToken();
+        $this->autoFollowRedirection = false;
+
+        foreach ([
+            '2001:DB8::99' => '2001:db8::99',
+            '2001:0db8:0000:0000:0000:0000:0000:0098' => '2001:db8::98',
+            '192.0.2.37' => '192.0.2.37',
+        ] as $typed => $canonical) {
+            $response = $this->post('admin/waf/ban', ['ip' => $typed, 'hours' => 1, 'SecurityID' => $token]);
+            $this->assertSame(302, $response->getStatusCode(), "ban of $typed accepted");
+            $this->assertTrue($this->isListedAsBanned($canonical), "$typed is listed as $canonical");
+            # A fresh service reads the bans file, as the middleware of a later request would
+            $this->assertTrue(WafStorageService::create()->isBanned($canonical), "$typed blocks $canonical");
+        }
+    }
+
+    /**
+     * A CMS user without WAF_ADMIN, holding a valid token, changes nothing: LeftAndMain sends them to
+     * the admin login before the action runs.
+     */
+    public function testUnbanByMemberWithoutWafAdminChangesNothing(): void
+    {
+        $this->storage()->banIp('192.0.2.38', 3600, 'test');
+        $token = $this->loadAdminToken();
+        $this->logInWithPermission('CMS_ACCESS_SecurityAdmin');
+        $this->autoFollowRedirection = false;
+
+        $response = $this->post('admin/waf/unban', ['ip' => '192.0.2.38', 'SecurityID' => $token]);
+
+        $this->assertSame(302, $response->getStatusCode());
+        $this->assertTrue($this->isListedAsBanned('192.0.2.38'), 'still banned');
+    }
+
     // ------------------------------------------------------------------
     // Escaping
     // ------------------------------------------------------------------

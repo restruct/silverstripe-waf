@@ -458,8 +458,9 @@ HTML
     }
 
     /**
-     * The WafAdmin a GridField action runs under, refusing (403) a member without WAF_ADMIN.
-     * GridField has already refused a request without a valid security token by then.
+     * The WafAdmin a GridField action runs under, refusing a request that is not a POST (405) and
+     * a member without WAF_ADMIN (403). GridField has already refused a request without a valid
+     * security token by then.
      *
      * @throws HTTPResponse_Exception
      */
@@ -468,6 +469,13 @@ HTML
         $admin = $gridField->getForm()?->getController();
         if (!$admin instanceof self || !$admin->canEdit()) {
             throw new HTTPResponse_Exception('Not allowed to administer the WAF', 403);
+        }
+        # GridField also runs an action from GET parameters. With the token in the query string that
+        # is still a replayable state change (a token leaked through a Referer, a log or history,
+        # a prefetcher), so a GridField action here changes state on a POST only, as GridField's
+        # own JavaScript sends it.
+        if (!$admin->getRequest()->isPOST()) {
+            throw new HTTPResponse_Exception('This action accepts POST requests only', 405);
         }
 
         return $admin;
@@ -506,6 +514,12 @@ HTML
         if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
             return false;
         }
+        # Store the canonical spelling: bans are keyed on the exact string, and PHP reports a
+        # client's IPv6 address in compressed lower case (2001:db8::99). A ban typed as
+        # 2001:DB8::99 or 2001:0db8:0:0:0:0:0:99 would be listed as active and block nobody.
+        # IPv4 comes back unchanged. An IPv4-mapped IPv6 address (::ffff:192.0.2.1) keeps that
+        # form: whether the server reports such a client as IPv4 or mapped IPv6 depends on the stack.
+        $ip = (string) inet_ntop((string) inet_pton($ip));
         # Same bounds as the form field: 1 hour to 1 year, 24 hours when not given
         $hours = $hours > 0 ? min($hours, 8760) : 24;
         $reason = trim($reason) !== '' ? trim($reason) : 'Manual ban';
