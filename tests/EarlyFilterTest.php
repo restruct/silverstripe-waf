@@ -183,6 +183,24 @@ class EarlyFilterTest extends TestCase
     // this pins the same invariants on our side so it breaks here first.
     // ========================================================================
 
+    /**
+     * resources/blocklist.json is the committed export that web-server generators read. It must be what
+     * the inventory exports today: regenerate it with its own version stamp and compare.
+     */
+    public function testCommittedExportMatchesTheInventory(): void
+    {
+        $file = dirname(__DIR__) . '/resources/blocklist.json';
+        $committed = json_decode((string) file_get_contents($file), true);
+        $this->assertIsArray($committed, 'resources/blocklist.json is valid JSON');
+
+        $json = shell_exec(
+            'php ' . escapeshellarg(dirname(__DIR__) . '/bin/export-blocklist.php') . ' '
+            . escapeshellarg((string) $committed['version']) . ' --stdout'
+        );
+        $this->assertSame(json_decode((string) $json, true), $committed,
+            'resources/blocklist.json is stale: run php bin/export-blocklist.php <version>');
+    }
+
     public function testExportShapeIsStable(): void
     {
         $json = shell_exec(
