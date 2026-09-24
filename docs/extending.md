@@ -97,12 +97,8 @@ vendor/bin/phpunit
 
 ### Test Coverage
 
-| Component | Tests |
-|-----------|-------|
-| IpBlocklistService | 13 |
-| WafStorageService | 9 |
-| WafMiddleware | 22 |
-| EarlyFilter | 10 |
-| **Total** | **54** |
+The suite had 184 tests at 1.6.0, the same count on Silverstripe 5 and 6; CI
+(`.github/workflows/ci.yml`) runs it on both majors. Per-component counts are not kept here: they
+drifted.
 
 Covers: IP range handling, CIDR conversion, binary search, range merging, high-load detection, rate limiting, time-windowed counters, soft limit delays, privileged IP factor lookup, privileged IP auto-ban protection, user-agent blocking, CIDR whitelist matching, path probe detection.

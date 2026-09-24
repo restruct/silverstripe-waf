@@ -1,10 +1,10 @@
 # Changelog
 
-## 1.6.0
+## 1.6.0 (2026-09-25)
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
 declared `silverstripe/framework: ^5.0 || ^6.0` since 1.0, but on Silverstripe 6 the module fataled on
-the first flush. It is now tested on both majors: 179 tests, same count on Silverstripe 5.4 and 6.2.
+the first flush. It is now tested on both majors: 184 tests, same count on Silverstripe 5.4 and 6.2.
 See [UPGRADING.md](UPGRADING.md).
 
 ### Fixed
@@ -14,12 +14,17 @@ See [UPGRADING.md](UPGRADING.md).
   and only the `WAF_ADMIN` permission was checked: any page a WAF admin opened could make their browser
   unban or ban an address. The admin screen now does both as GridField actions, which post with the
   form's security token and are refused without it. The `admin/waf/ban` and `admin/waf/unban` URL
-  actions accept only a POST with a valid `SecurityID` (405 for a GET, 400 for a missing or wrong token,
-  403 without permission). Found by reading the code, not by an observed attack.
+  actions accept only a POST with a valid `SecurityID` (405 for a GET, 400 for a missing or wrong token;
+  a member without `WAF_ADMIN` is redirected to the admin login and nothing changes). The GridField
+  actions also refuse a GET that carries the token in its query string (405), so a token leaked through
+  a `Referer`, a log or browser history does not make a replayable unban link. Found by reading the
+  code, not by an observed attack.
 - **Security: the manual-ban IP is validated on the server.** It must be a single IPv4 or IPv6 address
   (`FILTER_VALIDATE_IP`); anything else is refused and nothing is stored. Before, only the form's
   `pattern` attribute checked it. Ranges such as `10.0.0.0/8` are refused too: bans are stored per
-  exact address, so a range ban never matched a request.
+  exact address, so a range ban never matched a request. An IPv6 address is stored in its canonical
+  spelling (`2001:DB8::99` and `2001:0db8:0:0:0:0:0:99` both as `2001:db8::99`), the form PHP reports a
+  client in; before, such a ban was listed as active and blocked nobody.
 - **Security: values printed in the WAF admin panels are escaped.** A banned IP went unescaped into the
   unban link's inline `onclick` handler, where even an HTML-escaped value is decoded again before the
   JavaScript runs, so a stored value with quotes could run script. Blocklist source names, URLs and

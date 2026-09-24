@@ -40,7 +40,7 @@ which this summary may lag. See [Extending](extending.md#custom-blocked-patterns
 **Config and sensitive files:**
 `/.env`, `/.git`, `/.svn`, `/.htpasswd`, `/.htaccess`, `/config.php`, `/configuration.php`, `/LocalSettings.php`, `/web.config`
 
-**Environment config variants** (not caught by the `/.env` substring):
+**Environment config variants** (not caught by the `/.env` entry):
 `config.env`, `stripe.env`, `/env.js`, `/env.backup`, `/__env.js`
 
 **Build tool / framework dev probes:**

@@ -6,8 +6,9 @@
 `^5.4 || ^6`, PHP `^8.1`). Most sites need to do nothing beyond updating.
 
 **Silverstripe 5.0 to 5.3 are no longer allowed.** The framework floor is now 5.4, the only Silverstripe 5
-minor this release is tested on (the admin screen uses list filter syntax whose first 5.x minor is not
-known). A site on 5.0-5.3 stays on 1.5.x until it upgrades the framework.
+minor this release is tested on (the admin screen filters an in-memory list of bans and blocked
+requests with search-filter syntax such as `Created:GreaterThan`, which is not tested on older 5.x
+minors). A site on 5.0-5.3 stays on 1.5.x until it upgrades the framework.
 
 Note on constraints: a project requiring `~1.5.1` or `~1.5.2` means `>=1.5.x <1.6`, so it will **not**
 receive 1.6.0 until the constraint is widened (for example to `^1.5`).
@@ -49,10 +50,12 @@ You are affected only if your project extends or calls these directly:
 ### If you script the WAF admin's ban or unban URLs
 
 `admin/waf/ban` and `admin/waf/unban` now accept only a POST that carries the session's security token
-(`SecurityID`), from a member with `WAF_ADMIN`. A GET answers 405, a missing or wrong token 400. The
-ban IP must be a single IPv4 or IPv6 address (400 otherwise); ranges were never matched by a ban. The
-admin screen itself no longer uses these URLs: unban and the manual ban are GridField actions on the
-Active Bans grid (`GridFieldUnbanAction`, `GridFieldManualBan`).
+(`SecurityID`), from a member with `WAF_ADMIN`. A GET answers 405, a missing or wrong token 400, and a
+member without `WAF_ADMIN` is redirected to the admin login. The ban IP must be a single IPv4 or IPv6
+address (400 otherwise); ranges were never matched by a ban. An IPv6 address is stored in its canonical
+(compressed, lower-case) spelling. The admin screen itself no longer uses these URLs: unban and the
+manual ban are GridField actions on the Active Bans grid (`GridFieldUnbanAction`,
+`GridFieldManualBan`), which accept a POST only.
 
 If you subclass `WafAdmin`: `ban()` and `unban()` now take an `HTTPRequest` and return an
 `HTTPResponse` (they were `(): void`), the validated work is in `applyManualBan()` and `applyUnban()`,
