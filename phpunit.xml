@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
+    Since 1.6.0 most suites are SapphireTests and need a booted Silverstripe app, so run them from a
+    HOST PROJECT that installs this module as a symlinked path repository (/tests is export-ignored,
+    so a dist install has no tests), with the framework test bootstrap and a flush:
+      Silverstripe 5: vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests flush=1
+      Silverstripe 6: SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit vendor/restruct/silverstripe-waf/tests
+    The CI workflow (.github/workflows/ci.yml) builds such a host. The lines below predate 1.6.0 and
+    only run the plain-PHPUnit suites:
+
     Run tests from project root:
     vendor/bin/phpunit - -bootstrap vendor/autoload.php _dev/silverstripe-waf/tests/
 
@@ -9,7 +17,8 @@
 <phpunit
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-    bootstrap="vendor/autoload.php"
+    bootstrap="vendor/silverstripe/framework/tests/bootstrap.php"
+    failOnWarning="true"
     colors="true"
     beStrictAboutTestsThatDoNotTestAnything="true"
     beStrictAboutOutputDuringTests="true"
