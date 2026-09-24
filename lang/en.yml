@@ -1,0 +1,6 @@
+en:
+  # Silverstripe 6 reads a BuildTask's description through _t('<class>.description'), because its
+  # description is a static property shared with every other task and cannot be set per class
+  # from code that also has to run on Silverstripe 5. Keep in step with SyncBlocklistsTask::DESCRIPTION.
+  Restruct\SilverStripe\Waf\Tasks\SyncBlocklistsTask:
+    description: 'Download and cache IP blocklists from threat intelligence feeds (FireHOL, Binary Defense, etc.)'
