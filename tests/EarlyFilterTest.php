@@ -2,6 +2,7 @@
 
 namespace Restruct\SilverStripe\Waf\Tests;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -71,7 +72,7 @@ class EarlyFilterTest extends TestCase
     // Probe battery — genuine attack paths must all block (real inventory)
     // ========================================================================
 
-    public function probeProvider(): array
+    public static function probeProvider(): array
     {
         return array_map(fn($u) => [$u], [
             '/wp-login.php', '/wp-admin/setup-config.php', '/xmlrpc.php', '/wp-json/wp/v2/users',
@@ -96,6 +97,7 @@ class EarlyFilterTest extends TestCase
     }
 
     /** @dataProvider probeProvider */
+    #[DataProvider('probeProvider')]
     public function testGenuineProbesAreBlocked(string $path): void
     {
         $this->assertNotNull(
@@ -110,7 +112,7 @@ class EarlyFilterTest extends TestCase
     // healthcare/artisan slugs). None may match the shipped inventory.
     // ========================================================================
 
-    public function legitProvider(): array
+    public static function legitProvider(): array
     {
         return array_map(fn($u) => [$u], [
             // content vocabulary that used to collide (waf#3/waf#5)
@@ -138,6 +140,7 @@ class EarlyFilterTest extends TestCase
     }
 
     /** @dataProvider legitProvider */
+    #[DataProvider('legitProvider')]
     public function testLegitimateUrlsAreNotBlocked(string $path): void
     {
         $this->assertNull(
@@ -179,6 +182,24 @@ class EarlyFilterTest extends TestCase
     // resources/blocklist.json as a fixture, so a schema drift breaks its suite;
     // this pins the same invariants on our side so it breaks here first.
     // ========================================================================
+
+    /**
+     * resources/blocklist.json is the committed export that web-server generators read. It must be what
+     * the inventory exports today: regenerate it with its own version stamp and compare.
+     */
+    public function testCommittedExportMatchesTheInventory(): void
+    {
+        $file = dirname(__DIR__) . '/resources/blocklist.json';
+        $committed = json_decode((string) file_get_contents($file), true);
+        $this->assertIsArray($committed, 'resources/blocklist.json is valid JSON');
+
+        $json = shell_exec(
+            'php ' . escapeshellarg(dirname(__DIR__) . '/bin/export-blocklist.php') . ' '
+            . escapeshellarg((string) $committed['version']) . ' --stdout'
+        );
+        $this->assertSame(json_decode((string) $json, true), $committed,
+            'resources/blocklist.json is stale: run php bin/export-blocklist.php <version>');
+    }
 
     public function testExportShapeIsStable(): void
     {

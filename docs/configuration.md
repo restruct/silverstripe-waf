@@ -194,12 +194,18 @@ Restruct\SilverStripe\Waf\Services\IpBlocklistService:
 
 **Manual:**
 ```bash
-vendor/bin/sake dev/tasks/waf-sync-blocklists
+vendor/bin/sake dev/tasks/waf-sync-blocklists   # Silverstripe 5
+vendor/bin/sake tasks:waf-sync-blocklists       # Silverstripe 6
 ```
+
+In the browser, `/dev/tasks/waf-sync-blocklists` works on both.
 
 **Cron (recommended every 6 hours):**
 ```cron
+# Silverstripe 5
 0 */6 * * * cd /path/to/site && vendor/bin/sake dev/tasks/waf-sync-blocklists
+# Silverstripe 6
+0 */6 * * * cd /path/to/site && vendor/bin/sake tasks:waf-sync-blocklists
 ```
 
 **QueuedJobs (automatic):** If `symbiote/silverstripe-queuedjobs` is installed, the sync job auto-schedules every 6 hours. No manual cron setup required. The job is automatically created on first `dev/build`.

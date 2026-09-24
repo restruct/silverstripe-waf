@@ -10,6 +10,18 @@ use Symbiote\QueuedJobs\Services\AbstractQueuedJob;
 use Symbiote\QueuedJobs\Services\QueuedJob;
 use Symbiote\QueuedJobs\Services\QueuedJobService;
 
+# symbiote/silverstripe-queuedjobs is OPTIONAL (composer "suggest", and the YAML fragment that
+# schedules this job is gated by `Only: moduleexists`). Without it, declaring a subclass of
+# AbstractQueuedJob fatals the whole application on the next flush: the config layer's
+# PrivateStaticTransformer calls class_exists() on every class in the manifest, which autoloads
+# this file and hits the missing parent. The YAML `Only:` guard does not prevent that - it gates a
+# config fragment, not this file. A file-scope return leaves the class undeclared instead (waf#6).
+# The guard sits BELOW the `use` block on purpose: above it, AbstractQueuedJob::class would resolve
+# into this file's own namespace and the check would always be false.
+if (!class_exists(AbstractQueuedJob::class)) {
+    return;
+}
+
 /**
  * Queued job to sync IP blocklists from threat intelligence feeds
  *

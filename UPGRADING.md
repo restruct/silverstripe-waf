@@ -1,0 +1,73 @@
+# Upgrading
+
+## 1.5.x to 1.6.0
+
+1.6.0 keeps one line for Silverstripe 5 and 6 (`composer.json` is the source of truth: framework
+`^5.4 || ^6`, PHP `^8.1`). Most sites need to do nothing beyond updating.
+
+**Silverstripe 5.0 to 5.3 are no longer allowed.** The framework floor is now 5.4, the only Silverstripe 5
+minor this release is tested on (the admin screen filters an in-memory list of bans and blocked
+requests with search-filter syntax such as `Created:GreaterThan`, which is not tested on older 5.x
+minors). A site on 5.0-5.3 stays on 1.5.x until it upgrades the framework.
+
+Note on constraints: a project requiring `~1.5.1` or `~1.5.2` means `>=1.5.x <1.6`, so it will **not**
+receive 1.6.0 until the constraint is widened (for example to `^1.5`).
+
+### If you are on Silverstripe 6
+
+This is the first release that runs there. Run the blocklist sync task with the Silverstripe 6 syntax:
+
+    vendor/bin/sake tasks:waf-sync-blocklists
+
+`/dev/tasks/waf-sync-blocklists` in the browser is unchanged. Update any cron line that used
+`sake dev/tasks/waf-sync-blocklists`.
+
+### If you do not have symbiote/silverstripe-queuedjobs
+
+Nothing to do. Before 1.6.0 such a site fataled on the next flush (deploy, `dev/build`, `?flush=1`);
+from 1.6.0 the queued job simply does not exist without queuedjobs. Schedule the sync from cron instead
+(see [docs/configuration.md](docs/configuration.md#syncing-blocklists)).
+
+### If you subclass or call module classes
+
+You are affected only if your project extends or calls these directly:
+
+- **`PrivilegedIp::validate()` is no longer overridden.** The checks moved to
+  `PrivilegedIp::validateIpAndFactor($result)`, run from `PrivilegedIpValidationExtension` through
+  `DataObject::validate()`'s extension hook. A subclass that overrode `validate()` and called
+  `parent::validate()` still gets the checks (they now run inside the parent call). Validation results
+  are unchanged.
+- **`WafStorageService::getActiveBans()` / `getBlockedRequests()`** now declare an `SS_List` return type
+  (a union of `SilverStripe\ORM\SS_List` and `SilverStripe\Model\List\SS_List`) instead of `ArrayList`.
+  In file and cache mode they still return an ArrayList; in database mode they return a DataList, which
+  used to be a TypeError. A subclass overriding them with `: ArrayList` must use a type compatible with
+  the new declaration. Code that called `->push()` on the result only works in file/cache mode, as before.
+- **`SyncBlocklistsTask`** no longer declares `$title` / `$description` properties (their types differ
+  between Silverstripe 5 and 6). Override `getTitle()` in a subclass instead; the description lives in the
+  `SyncBlocklistsTask::DESCRIPTION` constant and `lang/en.yml`. The task body moved from `run()` into
+  `sync(callable $writeLine)`.
+
+### If you script the WAF admin's ban or unban URLs
+
+`admin/waf/ban` and `admin/waf/unban` now accept only a POST that carries the session's security token
+(`SecurityID`), from a member with `WAF_ADMIN`. A GET answers 405, a missing or wrong token 400, and a
+member without `WAF_ADMIN` is redirected to the admin login. The ban IP must be a single IPv4 or IPv6
+address (400 otherwise); ranges were never matched by a ban. An IPv6 address is stored in its canonical
+(compressed, lower-case) spelling. The admin screen itself no longer uses these URLs: unban and the
+manual ban are GridField actions on the Active Bans grid (`GridFieldUnbanAction`,
+`GridFieldManualBan`), which accept a POST only.
+
+If you subclass `WafAdmin`: `ban()` and `unban()` now take an `HTTPRequest` and return an
+`HTTPResponse` (they were `(): void`), the validated work is in `applyManualBan()` and `applyUnban()`,
+and `getManualBanFields()` is gone (kept commented out in the source).
+
+### If you added patterns under `Restruct\SilverStripe\Waf\EarlyFilter`
+
+They never took effect, in any version: nothing reads that config. 1.6.0 comments the module's own copy
+out. Remove the keys from your project config, and block the paths in the web server or a project
+middleware instead (see [docs/extending.md](docs/extending.md#custom-blocked-patterns)).
+
+### Dependencies
+
+`silverstripe/admin` is now a declared requirement. Every install already had it (the admin screen
+extends `LeftAndMain`), so Composer should resolve without changes.

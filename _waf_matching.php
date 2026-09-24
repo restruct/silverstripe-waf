@@ -27,8 +27,8 @@
  *
  * INVENTORY PRINCIPLE (waf#5): a default entry may encode ATTACKER INFRASTRUCTURE —
  * paths no legitimate site serves — never CONTENT VOCABULARY a site might publish.
- * Dropped under that rule in 1.5.0 (opt-in via your own config if you want them back;
- * see CHANGELOG): /health, /metrics, /console/, /debug/, /api/debug, /api/test,
+ * Dropped under that rule in 1.5.0 (see CHANGELOG; there is no per-site config to add them
+ * back, the inventory is code-level: docs/extending.md): /health, /metrics, /console/, /debug/, /api/debug, /api/test,
  * /sql/, /db/, /database/, bare '~', and the archive/db extensions
  * (.zip .tar .tar.gz .tgz .gz .rar .7z .sql .backup .old .save .tmp) — on Silverstripe
  * protected assets stream through PHP, so blocking download extensions blocks features.

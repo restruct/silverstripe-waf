@@ -1,0 +1,243 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: SS${{ matrix.silverstripe }} / PHP ${{ matrix.php }}${{ matrix.queuedjobs && ' / queuedjobs' || '' }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One line spans both majors (composer.json: framework ^5.4 || ^6, php ^8.1), so each
+          # major is tested at the oldest and newest PHP it is used with here. composer.json is the
+          # source of truth for the range; this matrix must follow it.
+          - silverstripe: '5'
+            php: '8.1'
+            recipe: '^5'
+            testing: '^3'
+          - silverstripe: '5'
+            php: '8.3'
+            recipe: '^5'
+            testing: '^3'
+          - silverstripe: '6'
+            php: '8.3'
+            recipe: '^6'
+            testing: '^4'
+          - silverstripe: '6'
+            php: '8.4'
+            recipe: '^6'
+            testing: '^4'
+          # queuedjobs is optional. The legs above run WITHOUT it, which is what proves the
+          # SyncBlocklistsJob guard (waf#6): an unguarded job class fatals the flush there. These
+          # two run WITH it, so the job class is declared and loaded on each major too.
+          - silverstripe: '5'
+            php: '8.3'
+            recipe: '^5'
+            testing: '^3'
+            queuedjobs: '^5'
+          - silverstripe: '6'
+            php: '8.3'
+            recipe: '^6'
+            testing: '^4'
+            queuedjobs: '^6'
+
+    services:
+      database:
+        # MariaDB rather than MySQL: it matches both the local dev machines and the Forge
+        # servers, so a version-specific failure here means something real.
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: ss_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    env:
+      SS_DATABASE_CLASS: MySQLDatabase
+      SS_DATABASE_SERVER: 127.0.0.1
+      SS_DATABASE_PORT: 3306
+      SS_DATABASE_USERNAME: root
+      SS_DATABASE_PASSWORD: root
+      SS_DATABASE_NAME: ss_ci
+      SS_ENVIRONMENT_TYPE: dev
+
+    steps:
+      - name: Check out the module
+        uses: actions/checkout@v4
+        with:
+          path: module
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, intl, pdo_mysql, mysqli, gd, zip, dom, xml, tokenizer, simplexml, ctype, hash, session
+          tools: composer:v2
+          coverage: none
+
+      - name: Build a host project
+        # The module cannot be tested on its own: most suites need a booted Silverstripe app. The
+        # host composer.json is written by hand; recipe-cms is the thing to require (it also brings
+        # silverstripe/errorpage, whose static-page write during the database build exercises the
+        # middleware with an IP-less request).
+        #
+        # The module is pulled in through a PATH repository pointing at the checkout, symlinked
+        # rather than mirrored: /tests is export-ignore in .gitattributes, so a mirrored
+        # (dist-style) install would contain no tests at all and the suite would silently pass
+        # with nothing in it.
+        run: |
+          mkdir -p app-host
+          cd app-host
+          cat > composer.json <<JSON
+          {
+            "name": "restruct/ci-host",
+            "require": {
+              "silverstripe/recipe-cms": "${{ matrix.recipe }}",
+              "silverstripe/recipe-testing": "${{ matrix.testing }}",
+              "restruct/silverstripe-waf": "*"
+            },
+            "repositories": [
+              { "type": "path", "url": "../module", "options": { "symlink": true } }
+            ],
+            "autoload-dev": {
+              "psr-4": {
+                "Restruct\\\\SilverStripe\\\\Waf\\\\Tests\\\\": "vendor/restruct/silverstripe-waf/tests/"
+              }
+            },
+            "minimum-stability": "dev",
+            "prefer-stable": true,
+            "config": { "allow-plugins": true }
+          }
+          JSON
+          # Silverstripe 5 is in security-fixes-only until its April 2027 EOL, and every release
+          # of it is covered by three advisories whose fixes exist only on 6.x, so they will not
+          # be patched there: PKSA-pjvm-vnw2-n3m2 (silverstripe/cms <6.2.1), PKSA-x6tz-s6v3-ynk3
+          # (silverstripe/framework <6.2.2) and PKSA-nksq-cxj8-zb32 (silverstripe/versioned <3.2.1).
+          # Composer therefore refuses to install it under the default policy.
+          # Blocking is disabled HERE ONLY, in a throwaway CI host project.
+          composer config policy.advisories.block false
+          if [ -n "${{ matrix.queuedjobs }}" ]; then
+            composer require --no-update "symbiote/silverstripe-queuedjobs:${{ matrix.queuedjobs }}"
+          fi
+          composer update --no-interaction --no-progress
+
+      - name: Configure the test suite
+        run: |
+          cd app-host
+          cat > phpunit.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!-- Warning-to-error escalation is the RUNNER's behaviour and differs by PHPUnit
+               major: 9 (SS5) converts warnings by default, 11 (SS6) has no such attribute.
+               failOnWarning is pinned so a warning behaves identically on every leg.
+               failOnEmptyTestSuite: a suite that finds no tests fails instead of passing. -->
+          <phpunit bootstrap="vendor/silverstripe/framework/tests/bootstrap.php" colors="true"
+                   failOnWarning="true" failOnEmptyTestSuite="true">
+              <testsuites>
+                  <testsuite name="consumer">
+                      <directory>app/tests</directory>
+                  </testsuite>
+              </testsuites>
+          </phpunit>
+          XML
+
+      - name: Add a consumer-shape database test
+        # A module's own suite cannot catch an unbuildable fixture in its tests/ dir: its fixtures
+        # are loaded by PHPUnit, never registered in the manifest, so no tables are built. A
+        # database test in the HOST, run with a flush, is what fatals if one ships.
+        run: |
+          mkdir -p app-host/app/tests
+          cat > app-host/app/tests/ConsumerDbTest.php <<'PHP'
+          <?php
+
+          use SilverStripe\Dev\SapphireTest;
+          use SilverStripe\Security\Member;
+
+          class ConsumerDbTest extends SapphireTest
+          {
+              protected $usesDatabase = true;
+
+              public function testTempDatabaseBuilds()
+              {
+                  $m = Member::create(['FirstName' => 'x']);
+                  $m->write();
+                  $this->assertGreaterThan(0, $m->ID);
+              }
+          }
+          PHP
+
+      - name: Run tests
+        # Flushing is per PHPUnit major, and the two mechanisms are NOT interchangeable:
+        # - SS6 / PHPUnit 11 treats a bare `flush=1` argument as a test PATH (and fails on it);
+        #   SS_PHPUNIT_FLUSH=1 flushes instead.
+        # - SS5 / PHPUnit 9: SS_PHPUNIT_FLUSH is inert on framework 5, so the flush is the
+        #   path-first `flush=1` argument (never after --testsuite, where it does nothing).
+        # A fresh runner has no manifest cache either, but the explicit flush is what is relied on.
+        # --fail-on-empty-test-suite (PHPUnit 9.6 and 11): a path that finds no tests, such as a
+        # dist-style install without /tests, fails the leg instead of passing with nothing run.
+        working-directory: app-host
+        run: |
+          if [ "${{ matrix.silverstripe }}" = "5" ]; then
+            vendor/bin/phpunit --fail-on-empty-test-suite vendor/restruct/silverstripe-waf/tests flush=1
+            vendor/bin/phpunit --fail-on-empty-test-suite app/tests flush=1
+          else
+            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit --fail-on-empty-test-suite vendor/restruct/silverstripe-waf/tests
+            SS_PHPUNIT_FLUSH=1 vendor/bin/phpunit --fail-on-empty-test-suite app/tests
+          fi
+
+      - name: Boot the app and build the database
+        # The suite proves the classes behave; this proves the module does not break a real boot
+        # with a flush (waf#6 was a flush-time fatal).
+        working-directory: app-host
+        run: |
+          if [ "${{ matrix.silverstripe }}" = "5" ]; then
+            php vendor/silverstripe/framework/cli-script.php dev/build flush=1
+          else
+            vendor/bin/sake db:build --flush
+          fi
+
+      - name: Audit this module's YAML config
+        # Up to 1.5.x the module shipped config for a class that does not exist (EarlyFilter), and
+        # the docs told sites to add patterns there; nothing ever read it. config:audit lists every
+        # config key that no class declares as a private static. It exits 0 whatever it finds and
+        # also lists other modules' keys, so this step fails only on this module's namespace.
+        # Limit: it does not report every scalar key (of the old EarlyFilter block it listed the two
+        # array keys only), so it catches a stray block, not every stray key.
+        working-directory: app-host
+        run: |
+          if [ "${{ matrix.silverstripe }}" = "5" ]; then
+            php vendor/silverstripe/framework/cli-script.php dev/config/audit flush=1 > config-audit.txt
+          else
+            vendor/bin/sake config:audit --flush > config-audit.txt
+          fi
+          cat config-audit.txt
+          if grep -i 'restruct\\silverstripe\\waf' config-audit.txt; then
+            echo "::error::restruct/silverstripe-waf sets config that no class declares (listed above)"
+            exit 1
+          fi
+
+  lint:
+    name: Lint PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling of the module's declared php constraint as tested here.
+        php: ['8.1', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+      - name: Syntax check every PHP file
+        run: find src tests bin -name '*.php' -print0 | xargs -0 -n1 php -l && php -l _waf_early_filter.php && php -l _waf_matching.php

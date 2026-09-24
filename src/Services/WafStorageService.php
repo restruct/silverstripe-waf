@@ -8,8 +8,6 @@ use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\TempFolder;
-use SilverStripe\ORM\ArrayList;
-use SilverStripe\View\ArrayData;
 
 /**
  * Hybrid storage service for WAF data
@@ -128,16 +126,16 @@ class WafStorageService
     /**
      * Get all active bans (for admin display)
      */
-    public function getActiveBans(): ArrayList
+    public function getActiveBans(): \SilverStripe\ORM\SS_List|\SilverStripe\Model\List\SS_List
     {
-        $list = ArrayList::create();
+        $list = $this->createArrayList();
         $mode = $this->getStorageMode();
 
         if ($mode === 'file') {
             $bans = $this->loadBansFromFile();
             foreach ($bans as $ip => $data) {
                 if ($data['expires'] > time()) {
-                    $list->push(ArrayData::create([
+                    $list->push($this->createArrayData([
                         'IpAddress' => $ip,
                         'Reason' => $data['reason'] ?? 'Unknown',
                         'ExpiresAt' => date('Y-m-d H:i:s', $data['expires']),
@@ -175,14 +173,17 @@ class WafStorageService
         $mode = $this->getStorageMode();
 
         if ($mode === 'file') {
+            # mb_substr, as in the database mode: a byte cut (substr) of a multibyte value splits the
+            # last character, json_encode() then fails on the invalid UTF-8 and the entry is lost
+            # (appendToBlockedLog writes a blank line instead).
             $this->appendToBlockedLog([
                 'timestamp' => time(),
                 'datetime' => date('Y-m-d H:i:s'),
                 'ip' => $ip,
-                'uri' => substr($uri, 0, 255),
-                'user_agent' => substr($userAgent, 0, 255),
+                'uri' => mb_substr($uri, 0, 255),
+                'user_agent' => mb_substr($userAgent, 0, 255),
                 'reason' => $reason,
-                'detail' => substr($detail, 0, 255),
+                'detail' => mb_substr($detail, 0, 255),
             ]);
         } elseif ($mode === 'database') {
             $this->saveBlockedRequestToDatabase($ip, $uri, $userAgent, $reason, $detail);
@@ -192,15 +193,15 @@ class WafStorageService
     /**
      * Get blocked requests (for admin display)
      */
-    public function getBlockedRequests(int $limit = 100): ArrayList
+    public function getBlockedRequests(int $limit = 100): \SilverStripe\ORM\SS_List|\SilverStripe\Model\List\SS_List
     {
-        $list = ArrayList::create();
+        $list = $this->createArrayList();
         $mode = $this->getStorageMode();
 
         if ($mode === 'file') {
             $entries = $this->readBlockedLog($limit);
             foreach ($entries as $entry) {
-                $list->push(ArrayData::create([
+                $list->push($this->createArrayData([
                     'Created' => $entry['datetime'] ?? date('Y-m-d H:i:s', $entry['timestamp'] ?? 0),
                     'IpAddress' => $entry['ip'] ?? '',
                     'Uri' => $entry['uri'] ?? '',
@@ -377,7 +378,10 @@ class WafStorageService
         try {
             $ban = $banClass::create();
             $ban->IpAddress = $ip;
-            $ban->Reason = $reason;
+            # Reason is Varchar(255). Silverstripe 6 validates field length on write and throws,
+            # which the catch below would swallow - silently losing a manual ban with a long reason.
+            # mb_substr: the limit is in characters, and a byte cut could split a multibyte character.
+            $ban->Reason = mb_substr($reason, 0, 255);
             $ban->ExpiresAt = date('Y-m-d H:i:s', $expiresAt);
             $ban->write();
         } catch (\Exception $e) {
@@ -402,11 +406,11 @@ class WafStorageService
         }
     }
 
-    protected function getBansFromDatabase(): ArrayList
+    protected function getBansFromDatabase(): \SilverStripe\ORM\SS_List|\SilverStripe\Model\List\SS_List
     {
         $banClass = 'Restruct\\SilverStripe\\Waf\\Models\\BannedIp';
         if (!class_exists($banClass)) {
-            return ArrayList::create();
+            return $this->createArrayList();
         }
 
         return $banClass::get()->filterAny([
@@ -430,21 +434,27 @@ class WafStorageService
         try {
             $log = $logClass::create();
             $log->IpAddress = $ip;
-            $log->Uri = substr($uri, 0, 255);
-            $log->UserAgent = substr($userAgent, 0, 255);
-            $log->Reason = $reason;
-            $log->Detail = substr($detail, 0, 255);
+            # Uri, UserAgent and Detail are Varchar(255): cut in characters (mb_substr), as for Reason
+            # below. A byte cut (substr) of a multibyte value splits the last character: MySQL stores
+            # it as '?', and the column keeps fewer characters than it has room for.
+            $log->Uri = mb_substr($uri, 0, 255);
+            $log->UserAgent = mb_substr($userAgent, 0, 255);
+            # Reason is Varchar(50). Silverstripe 6 validates field length (in characters) on write
+            # and throws, which the catch below swallows - silently losing the log row. mb_substr so
+            # a multibyte reason is cut on a character boundary, never mid-sequence.
+            $log->Reason = mb_substr($reason, 0, 50);
+            $log->Detail = mb_substr($detail, 0, 255);
             $log->write();
         } catch (\Exception $e) {
             // Ignore DB errors
         }
     }
 
-    protected function getBlockedRequestsFromDatabase(int $limit): ArrayList
+    protected function getBlockedRequestsFromDatabase(int $limit): \SilverStripe\ORM\SS_List|\SilverStripe\Model\List\SS_List
     {
         $logClass = 'Restruct\\SilverStripe\\Waf\\Models\\BlockedRequest';
         if (!class_exists($logClass)) {
-            return ArrayList::create();
+            return $this->createArrayList();
         }
 
         return $logClass::get()->sort('Created', 'DESC')->limit($limit);
@@ -542,6 +552,41 @@ class WafStorageService
     // ========================================================================
     // Utilities
     // ========================================================================
+
+    /*
+     * Silverstripe 6 moved ArrayList, ArrayData and SS_List out of SilverStripe\ORM / SilverStripe\View
+     * into SilverStripe\Model (no aliases are left behind), so this class names neither directly.
+     * The list-returning methods declare a union of both majors' SS_List: PHP resolves the names in a
+     * return type only when checking a value, so the one that does not exist on the running major is
+     * harmless. SS_List rather than ArrayList because database mode returns a DataList - which the
+     * pre-1.6.0 `: ArrayList` return type rejected with a TypeError.
+     */
+
+    /**
+     * An empty ArrayList of whichever class the running Silverstripe major provides.
+     *
+     * @return \SilverStripe\ORM\ArrayList|\SilverStripe\Model\List\ArrayList
+     */
+    protected function createArrayList(): \SilverStripe\ORM\SS_List|\SilverStripe\Model\List\SS_List
+    {
+        $class = class_exists('SilverStripe\\Model\\List\\ArrayList')
+            ? 'SilverStripe\\Model\\List\\ArrayList'     # Silverstripe 6
+            : 'SilverStripe\\ORM\\ArrayList';           # Silverstripe 5
+        return $class::create();
+    }
+
+    /**
+     * An ArrayData of whichever class the running Silverstripe major provides.
+     *
+     * @return \SilverStripe\View\ArrayData|\SilverStripe\Model\ArrayData
+     */
+    protected function createArrayData(array $data): object
+    {
+        $class = class_exists('SilverStripe\\Model\\ArrayData')
+            ? 'SilverStripe\\Model\\ArrayData'          # Silverstripe 6
+            : 'SilverStripe\\View\\ArrayData';          # Silverstripe 5
+        return $class::create($data);
+    }
 
     protected function getStorageMode(): string
     {

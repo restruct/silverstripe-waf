@@ -2,6 +2,7 @@
 
 namespace Restruct\SilverStripe\Waf\Middleware;
 
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
 use Restruct\SilverStripe\Waf\Models\PrivilegedIp;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
@@ -124,6 +125,22 @@ class WafMiddleware implements HTTPMiddleware
         $ip = $request->getIP();
         $userAgent = $request->getHeader('User-Agent') ?? '';
         $uri = $request->getURL(true);
+
+        # No client IP means an internal request, not a visitor: HTTPRequest::getIP() is null for a
+        # request built in-process, e.g. Director::test() - which is how ErrorPage writes its static
+        # error pages during dev/build, and how FunctionalTest drives a site. There is nothing to
+        # rate-limit or ban by, and passing null on to the string-typed checks below was a TypeError
+        # that aborted `sake db:build` on a Silverstripe 6 site with silverstripe/errorpage installed.
+        if ($ip === null || $ip === '') {
+            # Every check is skipped here, so leave a trace: should a request from outside ever reach
+            # this branch (a proxy setup that loses the client address), it shows up in the debug log
+            # instead of passing silently. Debug level, because in-process requests take it routinely.
+            Injector::inst()->get(LoggerInterface::class)->debug(sprintf(
+                '[WAF] no client IP, all checks skipped uri="%s"',
+                $uri
+            ));
+            return $delegate($request);
+        }
 
         // Skip whitelisted IPs
         if ($this->isWhitelistedIp($ip)) {

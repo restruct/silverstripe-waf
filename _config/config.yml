@@ -257,71 +257,77 @@ Restruct\SilverStripe\Waf\Services\IpBlocklistService:
 # Early Filter Configuration
 # -----------------------------------------------------------------------------
 # URL patterns blocked before Silverstripe loads (minimal overhead).
+#
+# NOT READ BY ANYTHING (commented out in 1.6.0). No class Restruct\SilverStripe\Waf\EarlyFilter
+# exists and the early filter runs before the framework, so it never read this block: adding a
+# pattern here never blocked anything. The inventory is code-level, typed and anchored, in
+# _waf_matching.php (wafBlockedPathEntries()); the random-PHP-probe check and its allowed files are
+# in _waf_early_filter.php. See docs/extending.md. The old block is kept below for reference.
 
-Restruct\SilverStripe\Waf\EarlyFilter:
-  # URL patterns to block (substring match, case-insensitive)
-  blocked_patterns:
-    # WordPress probes (very common on any PHP site)
-    - '/wp-admin'
-    - '/wp-login'
-    - '/wp-content'
-    - '/wp-includes'
-    - '/xmlrpc.php'
-    - '/wp-config'
-
-    # PHP backdoors and webshells
-    - '/eval-stdin.php'
-    - '/alfacgiapi'
-    - '/alfa-rex'
-    - '/shell.php'
-    - '/c99.php'
-    - '/r57.php'
-    - '/wso.php'
-
-    # Config and sensitive files
-    - '/.env'
-    - '/.git'
-    - '/.svn'
-    - '/.htpasswd'
-    - '/.htaccess'
-    - '/config.php'
-    - '/configuration.php'
-    - '/LocalSettings.php'
-    - '/web.config'
-
-    # Env config variants (not caught by /.env — .env as file extension)
-    - 'config.env'
-    - 'stripe.env'
-    - '/env.js'
-    - '/env.backup'
-    - '/__env.js'
-
-    # Build tool / framework dev probes
-    - '/@vite/'
-    - '/.vite/'
-    - '/node_modules/'
-    - '/asset-manifest.json'
-
-    # Other CMS admin paths
-    - '/administrator/index.php'
-    - '/phpmyadmin'
-    - '/pma/'
-    - '/myadmin/'
-    - '/adminer'
-
-    # Path traversal attempts
-    - '../'
-    - '..%2f'
-    - '..%252f'
-
-  # Block random PHP file probes (e.g., /abc123.php, /xyz.php)
-  # These are typically looking for uploaded webshells
-  block_random_php_probes: true
-  php_probe_pattern: '/^\/[a-z0-9_]{2,8}\.php$/i'
-
-  # Short PHP files that are legitimate (won't be blocked)
-  legitimate_php_files:
-    - '/index.php'
+# Restruct\SilverStripe\Waf\EarlyFilter:
+#   # URL patterns to block (substring match, case-insensitive)
+#   blocked_patterns:
+#     # WordPress probes (very common on any PHP site)
+#     - '/wp-admin'
+#     - '/wp-login'
+#     - '/wp-content'
+#     - '/wp-includes'
+#     - '/xmlrpc.php'
+#     - '/wp-config'
+#
+#     # PHP backdoors and webshells
+#     - '/eval-stdin.php'
+#     - '/alfacgiapi'
+#     - '/alfa-rex'
+#     - '/shell.php'
+#     - '/c99.php'
+#     - '/r57.php'
+#     - '/wso.php'
+#
+#     # Config and sensitive files
+#     - '/.env'
+#     - '/.git'
+#     - '/.svn'
+#     - '/.htpasswd'
+#     - '/.htaccess'
+#     - '/config.php'
+#     - '/configuration.php'
+#     - '/LocalSettings.php'
+#     - '/web.config'
+#
+#     # Env config variants (not caught by /.env — .env as file extension)
+#     - 'config.env'
+#     - 'stripe.env'
+#     - '/env.js'
+#     - '/env.backup'
+#     - '/__env.js'
+#
+#     # Build tool / framework dev probes
+#     - '/@vite/'
+#     - '/.vite/'
+#     - '/node_modules/'
+#     - '/asset-manifest.json'
+#
+#     # Other CMS admin paths
+#     - '/administrator/index.php'
+#     - '/phpmyadmin'
+#     - '/pma/'
+#     - '/myadmin/'
+#     - '/adminer'
+#
+#     # Path traversal attempts
+#     - '../'
+#     - '..%2f'
+#     - '..%252f'
+#
+#   # Block random PHP file probes (e.g., /abc123.php, /xyz.php)
+#   # These are typically looking for uploaded webshells
+#   block_random_php_probes: true
+#   php_probe_pattern: '/^\/[a-z0-9_]{2,8}\.php$/i'
+#
+#   # Short PHP files that are legitimate (won't be blocked)
+#   legitimate_php_files:
+#     - '/index.php'
 
 # -----------------------------------------------------------------------------
 # ModelAdmin Guard (Optional Extension)

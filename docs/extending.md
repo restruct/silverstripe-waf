@@ -1,17 +1,29 @@
 # Extending
 
-## Add Custom Blocked Patterns
+## Custom Blocked Patterns
 
-Add URL patterns to the early filter via YAML config:
+The blocked-path inventory is **code-level and not configurable per site**. It lives in
+`_waf_matching.php` (`wafBlockedPathEntries()`), where every entry is typed and anchored
+(`exact`, `prefix`, `segment`, `suffix`, `contains`, `traversal`) and matched against the decoded
+URL path, never the query string. The random-PHP-probe check and its allowed short files
+(`/index.php`) are in `_waf_early_filter.php`.
 
-```yaml
-Restruct\SilverStripe\Waf\EarlyFilter:
-  blocked_patterns:
-    - '/my-custom-block'
-    - '/another-pattern'
-```
+Up to 1.5.x the module's `_config/config.yml` shipped a `Restruct\SilverStripe\Waf\EarlyFilter:`
+block (`blocked_patterns`, `block_random_php_probes`, `php_probe_pattern`, `legitimate_php_files`)
+and this page said to add patterns there. Nothing ever read that config: there is no such class, and
+the early filter runs before the framework loads. A pattern added there never blocked anything. The
+block is commented out from 1.6.0; if your project config sets these keys, remove them, they have no
+effect.
 
-Patterns are matched as substrings (case-insensitive). A pattern like `/wp-admin` matches any URL containing that string.
+To block an extra path on one site, do it where the site's own config lives:
+
+- **Web server** (cheapest, the request never reaches PHP): an nginx `location` or an Apache rule.
+  `resources/blocklist.json` exports the module's inventory for generators that write such config.
+- **Project middleware**: a small `HTTPMiddleware` in your project that returns a 403 for your paths.
+
+A pattern that every Silverstripe site should block belongs in the module's inventory: propose it
+there (with a test in `tests/EarlyFilterTest.php`), keeping to the rule that an entry encodes attacker
+infrastructure, never words a site might publish (see [Early Filter](early-filter.md)).
 
 ## Add Custom Blocklist Source
 
@@ -85,12 +97,8 @@ vendor/bin/phpunit
 
 ### Test Coverage
 
-| Component | Tests |
-|-----------|-------|
-| IpBlocklistService | 13 |
-| WafStorageService | 9 |
-| WafMiddleware | 22 |
-| EarlyFilter | 10 |
-| **Total** | **54** |
+The suite had 184 tests at 1.6.0, the same count on Silverstripe 5 and 6; CI
+(`.github/workflows/ci.yml`) runs it on both majors. Per-component counts are not kept here: they
+drifted.
 
 Covers: IP range handling, CIDR conversion, binary search, range merging, high-load detection, rate limiting, time-windowed counters, soft limit delays, privileged IP factor lookup, privileged IP auto-ban protection, user-agent blocking, CIDR whitelist matching, path probe detection.
