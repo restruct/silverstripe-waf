@@ -125,6 +125,15 @@ class WafMiddleware implements HTTPMiddleware
         $userAgent = $request->getHeader('User-Agent') ?? '';
         $uri = $request->getURL(true);
 
+        # No client IP means an internal request, not a visitor: HTTPRequest::getIP() is null for a
+        # request built in-process, e.g. Director::test() - which is how ErrorPage writes its static
+        # error pages during dev/build, and how FunctionalTest drives a site. There is nothing to
+        # rate-limit or ban by, and passing null on to the string-typed checks below was a TypeError
+        # that aborted `sake db:build` on a Silverstripe 6 site with silverstripe/errorpage installed.
+        if ($ip === null || $ip === '') {
+            return $delegate($request);
+        }
+
         // Skip whitelisted IPs
         if ($this->isWhitelistedIp($ip)) {
             return $delegate($request);
