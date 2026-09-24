@@ -4,7 +4,7 @@
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
 declared `silverstripe/framework: ^5.0 || ^6.0` since 1.0, but on Silverstripe 6 the module fataled on
-the first flush. It is now tested on both majors: 156 tests, same count on Silverstripe 5.4 and 6.2.
+the first flush. It is now tested on both majors: 158 tests, same count on Silverstripe 5.4 and 6.2.
 See [UPGRADING.md](UPGRADING.md).
 
 ### Fixed
@@ -25,6 +25,10 @@ See [UPGRADING.md](UPGRADING.md).
   a TypeError** (both majors). They returned a DataList from methods typed `: ArrayList`.
 - **Silverstripe 6: a manual ban with a reason over 255 characters is no longer silently lost** in
   database mode (field-length validation threw and the exception was swallowed). The reason is truncated.
+- **Silverstripe 6: a blocked request with a reason over 50 characters is no longer silently dropped from
+  the database log**, for the same reason. The reason is truncated to 50 characters (multibyte-safe).
+- **The WAF admin status panels show the sake command of the running major.** They printed the
+  Silverstripe 5 form (`dev/tasks/waf-sync-blocklists`) on Silverstripe 6 too.
 - **The early-filter data-provider tests now run on PHPUnit 10+.** They were refused by PHPUnit 11, so
   72 test cases silently never ran on Silverstripe 6.
 
@@ -40,6 +44,8 @@ See [UPGRADING.md](UPGRADING.md).
 - `WafStorageService::getActiveBans()` and `getBlockedRequests()` declare an `SS_List` return type (a
   union of both majors' SS_List) instead of `ArrayList`.
 - `require-dev` is `silverstripe/recipe-testing ^3 || ^4` instead of a bare `phpunit/phpunit ^9.5`.
+- `psr/simple-cache` is required as `^3.0` instead of `^1.0 || ^2.0 || ^3.0`; 1 and 2 were never
+  installable, since `silverstripe/config` requires `^3.0` on both majors.
 - `composer.json` carries a `funding` entry.
 
 ### Added
