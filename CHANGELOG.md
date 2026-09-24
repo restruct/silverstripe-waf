@@ -64,17 +64,17 @@ See [UPGRADING.md](UPGRADING.md).
 
 - **Removed the worker-holding soft-rate-limit delay (attack vector).** The soft rate limit
   `usleep()`'d inside the PHP-FPM worker (up to 3s, scaling from the threshold to the hard limit),
-  so a "soft-limited" request HELD a scarce worker slot — amplifying the pool exhaustion it appeared
+  so a "soft-limited" request HELD a scarce worker slot, amplifying the pool exhaustion it appeared
   to defend against. A fast human on an AJAX-per-keystroke UI could trip it, and an attacker could
-  use it to pin workers. **Worse: it shipped ON by default** — `_config/config.yml` set
+  use it to pin workers. **Worse: it shipped ON by default**: `_config/config.yml` set
   `soft_rate_limit_enabled: true`, overriding the code static (`false`), so the delay was live on
   every install that didn't explicitly disable it (the 1.5.0 "default off" only changed the static).
 - **Soft rate limiting is now NON-BLOCKING.** When enabled and a client is over
   `soft_rate_limit_threshold` % of its hard limit, the served response carries standard
   `X-RateLimit-Limit` / `X-RateLimit-Remaining` headers so well-behaved clients self-throttle before
-  the hard 429 — no delay, no held worker. `soft_rate_limit_max_delay` is removed (inert if set).
+  the hard 429: no delay, no held worker. `soft_rate_limit_max_delay` is removed (inert if set).
   Default is off (both static and config.yml aligned); enabling is now safe.
-- The default-guard test now checks the **shipped config.yml**, not just the PHP static — the layer
+- The default-guard test now checks the **shipped config.yml**, not just the PHP static, the layer
   the previous test missed.
 
 ## 1.5.2
@@ -83,7 +83,7 @@ See [UPGRADING.md](UPGRADING.md).
 
 - **Microsoft autodiscover / `FPURL.xml` probes added to the inventory** (waf#1). Exchange/Outlook
   autodiscover probes have no legitimate answer on a Silverstripe site and were the one probe class
-  with hard evidence of consuming FPM workers during a real outage. `export: false` — the nginx
+  with hard evidence of consuming FPM workers during a real outage. `export: false`: the nginx
   parasite blocklist already owns these as exact-match locations, and a duplicate `location =` would
   be an nginx `[emerg]`; so this closes the gap for **standalone (no-webserver-config) sites** without
   affecting the exported nginx block. 132 tests.
@@ -97,16 +97,16 @@ See [UPGRADING.md](UPGRADING.md).
   (e.g. `/shell.php`) into the same `extension` type as true file-extensions (e.g.
   `.bak`), losing the fact that the leading `/` is significant. A consumer rendering
   `/shell.php` as an extension would emit `~* shell\.php$`, which also matches
-  `/notshell.php` — the waf#3 false-positive class, reintroduced at the webserver layer.
+  `/notshell.php`, the waf#3 false-positive class, reintroduced at the webserver layer.
   Reported by the forge-helper consumer. Export match set is now
-  `{exact, prefix, suffix, contains}` — `extension` no longer appears. A consumer maps
+  `{exact, prefix, suffix, contains}`; `extension` no longer appears. A consumer maps
   `suffix` → `location ~* <escaped-pattern>$` with the pattern's leading char preserved.
   A new test pins the export shape so this can't silently drift again.
 
 ## 1.5.0
 
 Path-matching engine rewrite and default hardening. **Read the "behaviour changes"
-below before upgrading** — a few shipped defaults changed on purpose.
+below before upgrading**: a few shipped defaults changed on purpose.
 
 ### Fixed
 
@@ -116,7 +116,7 @@ below before upgrading** — a few shipped defaults changed on purpose.
   was blocked by the `/health` pattern (403 + a tracked violation → auto-ban after 10),
   and a site-search for `wp-admin` blocked itself. Matching is now **typed and anchored**
   (`exact` / `prefix` / `segment` / `suffix` / `contains` / `traversal`) against the
-  **decoded URL path only** — the query string is never in the match target. Inventory
+  **decoded URL path only**; the query string is never in the match target. Inventory
   and matcher live in the new shared `_waf_matching.php`, so the tests exercise the
   **real** shipped list (the pre-1.5.0 tests kept a *duplicate* list, which is how the
   false positives went unnoticed).
@@ -124,7 +124,7 @@ below before upgrading** — a few shipped defaults changed on purpose.
 ### Behaviour changes (may need action on upgrade)
 
 - **`soft_rate_limit_enabled` now defaults to `false`** (waf#4). The soft limit delayed
-  busy clients with a `usleep()` of up to 3s **inside the PHP-FPM worker** — on a
+  busy clients with a `usleep()` of up to 3s **inside the PHP-FPM worker**. On a
   worker-constrained host that amplifies the pool-exhaustion failure it appears to
   prevent, and fast human users on AJAX-per-keystroke UIs trigger it. The hard limit
   (429) is unaffected. Re-enable per site if your environment can afford held workers.
@@ -136,7 +136,7 @@ below before upgrading** — a few shipped defaults changed on purpose.
   "words a site might legitimately publish, not attacker infrastructure": bare `/health`,
   `/metrics`, `/console`, `/debug`, `/api/debug`, `/api/test`, `/sql`, `/db`, `/database`,
   bare `~`, and the archive/db **file extensions** (`.zip .tar .tar.gz .tgz .gz .rar .7z
-  .sql .backup .old .save .tmp`) — downloads are a feature, and on Silverstripe protected
+  .sql .backup .old .save .tmp`): downloads are a feature, and on Silverstripe protected
   assets stream through `index.php` so the filter would see them. Kept but re-anchored:
   `/plesk`, `/artisan`, `/phpmyadmin`, webshell basenames, etc.
 
@@ -144,15 +144,15 @@ below before upgrading** — a few shipped defaults changed on purpose.
 
 - **Verified-crawler rate-limit exemption** (`rate_limit_exempt_verified_bots`, default
   on). Search engines verified by **forward-confirmed reverse DNS** (never UA string
-  alone — trivially spoofed) bypass rate limiting only; every other check still applies.
+  alone, which is trivially spoofed) bypass rate limiting only; every other check still applies.
   A Googlebot crawl burst no longer gets soft-delayed/429'd on a site whose content
   exists to be indexed. Verification is lazy (only IPs past the soft threshold) and
   cached 24h. Configure via `verified_bot_signatures` (UA-claim regex → rDNS parents).
-- **`resources/blocklist.json`** — the typed inventory as a versioned, schema-stamped
+- **`resources/blocklist.json`**: the typed inventory as a versioned, schema-stamped
   JSON export (`bin/export-blocklist.php <version>`), for webserver-config generators
   that want one source of truth and emit their own **anchored** forms (nginx `location`,
-  Apache). Entries the webserver should not emit (path traversal — the server's URI
-  normalisation already rejects it; dotfiles — the stock vhost deny covers them) are
+  Apache). Entries the webserver should not emit (path traversal, since the server's URI
+  normalisation already rejects it; dotfiles, since the stock vhost deny covers them) are
   excluded from the export.
 
 ### Known / not yet addressed
