@@ -74,4 +74,33 @@ class WafAdminTest extends SapphireTest
             $this->assertStringContainsString('198.51.100.20', $html, "$mode render");
         }
     }
+
+    /**
+     * The status panels print the sync command in the sake syntax of the running major:
+     * dev/tasks/<segment> on Silverstripe 5, tasks:<name> on Silverstripe 6 (where the SS5 form
+     * is not a sake command at all). It appears three times: status panel, sync command, cron line.
+     */
+    public function testStatusPanelsShowTheSakeCommandOfTheRunningMajor(): void
+    {
+        $this->logInWithPermission('ADMIN');
+        Config::modify()->set(WafStorageService::class, 'storage_mode', 'file');
+
+        # Detected independently of the code under test: PolyOutput exists only on Silverstripe 6.
+        $isSs6 = class_exists('SilverStripe\\PolyExecution\\PolyOutput');
+        $expected = $isSs6
+            ? 'vendor/bin/sake tasks:waf-sync-blocklists'
+            : 'vendor/bin/sake dev/tasks/waf-sync-blocklists';
+        $other = $isSs6
+            ? 'vendor/bin/sake dev/tasks/waf-sync-blocklists'
+            : 'vendor/bin/sake tasks:waf-sync-blocklists';
+
+        $admin = WafAdmin::create();
+        $request = new HTTPRequest('GET', '/admin/waf');
+        $request->setSession(new Session([]));
+        $admin->setRequest($request);
+        $html = (string) $admin->getEditForm()->forTemplate();
+
+        $this->assertSame(3, substr_count($html, $expected), "expected '$expected' in all three places");
+        $this->assertStringNotContainsString($other, $html);
+    }
 }

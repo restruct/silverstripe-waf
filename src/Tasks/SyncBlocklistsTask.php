@@ -114,6 +114,17 @@ class SyncBlocklistsTask extends BuildTask
     }
 
     /**
+     * The sake command that runs this task on the running major, for display (WafAdmin status panels).
+     * Silverstripe 5 addresses a task by its URL segment, Silverstripe 6 by its command name.
+     */
+    public static function getSakeCommand(): string
+    {
+        return static::isPolyCommandApi()
+            ? 'vendor/bin/sake tasks:' . static::$commandName
+            : 'vendor/bin/sake dev/tasks/' . static::config()->get('segment');
+    }
+
+    /**
      * Whether the running framework has the Silverstripe 6 BuildTask API.
      */
     protected static function isPolyCommandApi(): bool

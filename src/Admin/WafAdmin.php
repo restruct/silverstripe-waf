@@ -6,6 +6,7 @@ use Restruct\SilverStripe\Waf\Middleware\WafMiddleware;
 use Restruct\SilverStripe\Waf\Models\PrivilegedIp;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
+use Restruct\SilverStripe\Waf\Tasks\SyncBlocklistsTask;
 use SilverStripe\Admin\LeftAndMain;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Forms\FieldList;
@@ -123,6 +124,8 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
         }
 
         $storageMode = WafStorageService::config()->get('storage_mode');
+        # The sake syntax differs per major (dev/tasks/<segment> on SS5, tasks:<name> on SS6)
+        $syncCommand = SyncBlocklistsTask::getSakeCommand();
 
         return LiteralField::create('WafStats', <<<HTML
 <div style="background: #f5f5f5; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
@@ -145,7 +148,7 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
         </div>
     </div>
     <p style="margin-bottom: 0; margin-top: 10px; font-size: 12px; color: #666;">
-        Sync blocklists: <code>vendor/bin/sake dev/tasks/waf-sync-blocklists</code>
+        Sync blocklists: <code>{$syncCommand}</code>
     </p>
 </div>
 HTML
@@ -320,6 +323,9 @@ HTML
             $sourceRows .= "<tr><td>{$name}</td><td>{$count}</td><td>{$status}</td><td style='font-size:11px'>{$url}</td></tr>";
         }
 
+        # The sake syntax differs per major (dev/tasks/<segment> on SS5, tasks:<name> on SS6)
+        $syncCommand = SyncBlocklistsTask::getSakeCommand();
+
         return LiteralField::create('BlocklistStats', <<<HTML
 <div style="padding: 15px;">
     <h3>Threat Intelligence Blocklist</h3>
@@ -337,11 +343,11 @@ HTML
 
     <p style="margin-top: 20px;">
         <strong>Sync command:</strong><br>
-        <code>vendor/bin/sake dev/tasks/waf-sync-blocklists</code>
+        <code>{$syncCommand}</code>
     </p>
     <p>
         <strong>Recommended cron (every 6 hours):</strong><br>
-        <code>0 */6 * * * cd /path/to/site && vendor/bin/sake dev/tasks/waf-sync-blocklists</code>
+        <code>0 */6 * * * cd /path/to/site && {$syncCommand}</code>
     </p>
 </div>
 HTML
