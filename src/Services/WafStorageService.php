@@ -377,7 +377,8 @@ class WafStorageService
             $ban->IpAddress = $ip;
             # Reason is Varchar(255). Silverstripe 6 validates field length on write and throws,
             # which the catch below would swallow - silently losing a manual ban with a long reason.
-            $ban->Reason = substr($reason, 0, 255);
+            # mb_substr: the limit is in characters, and a byte cut could split a multibyte character.
+            $ban->Reason = mb_substr($reason, 0, 255);
             $ban->ExpiresAt = date('Y-m-d H:i:s', $expiresAt);
             $ban->write();
         } catch (\Exception $e) {
@@ -430,13 +431,16 @@ class WafStorageService
         try {
             $log = $logClass::create();
             $log->IpAddress = $ip;
-            $log->Uri = substr($uri, 0, 255);
-            $log->UserAgent = substr($userAgent, 0, 255);
+            # Uri, UserAgent and Detail are Varchar(255): cut in characters (mb_substr), as for Reason
+            # below. A byte cut (substr) of a multibyte value splits the last character: MySQL stores
+            # it as '?', and the column keeps fewer characters than it has room for.
+            $log->Uri = mb_substr($uri, 0, 255);
+            $log->UserAgent = mb_substr($userAgent, 0, 255);
             # Reason is Varchar(50). Silverstripe 6 validates field length (in characters) on write
             # and throws, which the catch below swallows - silently losing the log row. mb_substr so
             # a multibyte reason is cut on a character boundary, never mid-sequence.
             $log->Reason = mb_substr($reason, 0, 50);
-            $log->Detail = substr($detail, 0, 255);
+            $log->Detail = mb_substr($detail, 0, 255);
             $log->write();
         } catch (\Exception $e) {
             // Ignore DB errors

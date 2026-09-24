@@ -97,6 +97,60 @@ class WafStorageServiceListsTest extends SapphireTest
         $this->assertSame(str_repeat('é', 50), $log->Reason);
     }
 
+    /**
+     * A multibyte manual-ban reason over the Varchar(255) must be stored as its first 255 characters.
+     * 300 x 'é' is 600 bytes: a byte cut (substr) at 255 splits the 128th character, so the stored
+     * value is not these 255 characters (MySQL keeps 127 of them and stores the split one as '?').
+     */
+    public function testDatabaseModeLongMultibyteBanReasonIsPersisted(): void
+    {
+        $service = $this->service('database');
+        $service->banIp('203.0.113.14', 3600, str_repeat('é', 300));
+
+        $ban = BannedIp::get()->filter('IpAddress', '203.0.113.14')->first();
+        $this->assertNotNull($ban, 'ban with a 300-character multibyte reason should be stored');
+        $this->assertSame(str_repeat('é', 255), $ban->Reason);
+    }
+
+    /**
+     * A multibyte blocked-request Uri over its Varchar(255) must be stored as its first 255 characters.
+     */
+    public function testDatabaseModeLongMultibyteBlockedUriIsPersisted(): void
+    {
+        $service = $this->service('database');
+        $service->logBlockedRequest('203.0.113.15', '/' . str_repeat('é', 299), 'curl', 'blocked_pattern', 'probe');
+
+        $log = BlockedRequest::get()->filter('IpAddress', '203.0.113.15')->first();
+        $this->assertNotNull($log, 'blocked request with a 300-character multibyte URI should be stored');
+        $this->assertSame('/' . str_repeat('é', 254), $log->Uri);
+    }
+
+    /**
+     * A multibyte blocked-request UserAgent over its Varchar(255) must be stored as its first 255 characters.
+     */
+    public function testDatabaseModeLongMultibyteBlockedUserAgentIsPersisted(): void
+    {
+        $service = $this->service('database');
+        $service->logBlockedRequest('203.0.113.16', '/xmlrpc.php', str_repeat('é', 300), 'blocked_pattern', 'probe');
+
+        $log = BlockedRequest::get()->filter('IpAddress', '203.0.113.16')->first();
+        $this->assertNotNull($log, 'blocked request with a 300-character multibyte user agent should be stored');
+        $this->assertSame(str_repeat('é', 255), $log->UserAgent);
+    }
+
+    /**
+     * A multibyte blocked-request Detail over its Varchar(255) must be stored as its first 255 characters.
+     */
+    public function testDatabaseModeLongMultibyteBlockedDetailIsPersisted(): void
+    {
+        $service = $this->service('database');
+        $service->logBlockedRequest('203.0.113.17', '/xmlrpc.php', 'curl', 'blocked_pattern', str_repeat('é', 300));
+
+        $log = BlockedRequest::get()->filter('IpAddress', '203.0.113.17')->first();
+        $this->assertNotNull($log, 'blocked request with a 300-character multibyte detail should be stored');
+        $this->assertSame(str_repeat('é', 255), $log->Detail);
+    }
+
     public function testFileModeListsAreArrayListsOfTheRunningMajor(): void
     {
         $service = $this->service('file');

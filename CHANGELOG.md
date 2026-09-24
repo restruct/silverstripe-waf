@@ -4,7 +4,7 @@
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
 declared `silverstripe/framework: ^5.0 || ^6.0` since 1.0, but on Silverstripe 6 the module fataled on
-the first flush. It is now tested on both majors: 158 tests, same count on Silverstripe 5.4 and 6.2.
+the first flush. It is now tested on both majors: 162 tests, same count on Silverstripe 5.4 and 6.2.
 See [UPGRADING.md](UPGRADING.md).
 
 ### Fixed
@@ -27,6 +27,10 @@ See [UPGRADING.md](UPGRADING.md).
   database mode (field-length validation threw and the exception was swallowed). The reason is truncated.
 - **Silverstripe 6: a blocked request with a reason over 50 characters is no longer silently dropped from
   the database log**, for the same reason. The reason is truncated to 50 characters (multibyte-safe).
+- **Database storage mode: long multibyte values are truncated in characters, not bytes.** A manual-ban
+  reason and a blocked request's URI, user agent and detail over 255 characters were cut at 255 bytes,
+  splitting the last multibyte character: MySQL stored it as `?` and kept only part of the value. All
+  four now use `mb_substr`, like the blocked-request reason.
 - **The WAF admin status panels show the sake command of the running major.** They printed the
   Silverstripe 5 form (`dev/tasks/waf-sync-blocklists`) on Silverstripe 6 too.
 - **The early-filter data-provider tests now run on PHPUnit 10+.** They were refused by PHPUnit 11, so
