@@ -2,6 +2,7 @@
 
 namespace Restruct\SilverStripe\Waf\Tests\Middleware;
 
+use Psr\Log\LoggerInterface;
 use Psr\SimpleCache\CacheInterface;
 use Restruct\SilverStripe\Waf\Middleware\WafMiddleware;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
@@ -49,6 +50,36 @@ class WafMiddlewareRequestTest extends SapphireTest
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame('delegated', $response->getBody());
+    }
+
+    /**
+     * The no-IP pass-through skips every check, so it logs at debug level each time it is taken,
+     * and a request that has an IP does not log it.
+     */
+    public function testRequestWithoutIpIsLoggedAtDebugLevel(): void
+    {
+        $messages = [];
+        # A mock rather than a logger class: psr/log's method signatures differ between the majors
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('debug')->willReturnCallback(function ($message) use (&$messages) {
+            $messages[] = (string) $message;
+        });
+        Injector::inst()->registerService($logger, LoggerInterface::class);
+
+        $request = new HTTPRequest('GET', '/some/page');
+        WafMiddleware::create()->process($request, fn() => HTTPResponse::create('delegated', 200));
+
+        $skipped = array_values(array_filter($messages, fn($m) => str_contains($m, 'no client IP')));
+        $this->assertCount(1, $skipped, 'the no-IP branch logs once: ' . implode(' | ', $messages));
+        $this->assertStringContainsString('some/page', $skipped[0]);
+
+        # A request with a client IP goes through the checks and does not log the skip
+        $messages = [];
+        $request = new HTTPRequest('GET', '/some/page');
+        $request->setIP('192.0.2.49');
+        $request->addHeader('User-Agent', 'Mozilla/5.0');
+        WafMiddleware::create()->process($request, fn() => HTTPResponse::create('delegated', 200));
+        $this->assertSame([], array_filter($messages, fn($m) => str_contains($m, 'no client IP')));
     }
 
     public function testBlockedUserAgentIsRefusedWithAClientIp(): void

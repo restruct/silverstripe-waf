@@ -20,7 +20,8 @@ See [UPGRADING.md](UPGRADING.md).
   middleware passed a null client IP (an in-process request, as ErrorPage makes when writing its static
   pages) to string-typed checks, a TypeError. On Silverstripe 5 the same TypeError is reachable by any
   request that reaches the middleware without an IP (the Silverstripe 5 database build did not trigger
-  it). Requests without a client IP are now passed through.
+  it). Requests without a client IP are now passed through, skipping every check, and each one is
+  logged at debug level (`[WAF] no client IP, all checks skipped`) so the branch is never silent.
 - **Database storage mode: the CMS admin and `getActiveBans()` / `getBlockedRequests()` no longer throw
   a TypeError** (both majors). They returned a DataList from methods typed `: ArrayList`.
 - **Silverstripe 6: a manual ban with a reason over 255 characters is no longer silently lost** in
