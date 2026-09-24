@@ -9,6 +9,25 @@ See [UPGRADING.md](UPGRADING.md).
 
 ### Fixed
 
+- **Security: the WAF admin's ban and unban are protected against cross-site request forgery (CSRF).**
+  In 1.5.x unban was a GET link and the manual ban a hand-written POST, neither with a security token,
+  and only the `WAF_ADMIN` permission was checked: any page a WAF admin opened could make their browser
+  unban or ban an address. The admin screen now does both as GridField actions, which post with the
+  form's security token and are refused without it. The `admin/waf/ban` and `admin/waf/unban` URL
+  actions accept only a POST with a valid `SecurityID` (405 for a GET, 400 for a missing or wrong token,
+  403 without permission). Found by reading the code, not by an observed attack.
+- **Security: the manual-ban IP is validated on the server.** It must be a single IPv4 or IPv6 address
+  (`FILTER_VALIDATE_IP`); anything else is refused and nothing is stored. Before, only the form's
+  `pattern` attribute checked it. Ranges such as `10.0.0.0/8` are refused too: bans are stored per
+  exact address, so a range ban never matched a request.
+- **Security: values printed in the WAF admin panels are escaped.** A banned IP went unescaped into the
+  unban link's inline `onclick` handler, where even an HTML-escaped value is decoded again before the
+  JavaScript runs, so a stored value with quotes could run script. Blocklist source names, URLs and
+  fetch errors, privileged-tier names, factors and IPs, and the counters are now escaped as well.
+- **The manual ban no longer sits in a nested form.** Its `<form>` was nested inside the admin's edit
+  form; browsers drop a nested form, so by reading the markup the button could not have posted to the
+  ban action. The GridField version is tested over HTTP on both majors, not yet clicked through in a
+  browser.
 - **`SyncBlocklistsJob` no longer fatals the application when `symbiote/silverstripe-queuedjobs` is not
   installed** (waf#6). Declaring a subclass of a missing parent fataled every flush (deploy, `dev/build`,
   `?flush=1`, cold cache) on both majors, because the config layer autoloads every class in the manifest.

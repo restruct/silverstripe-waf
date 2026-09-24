@@ -46,6 +46,18 @@ You are affected only if your project extends or calls these directly:
   `SyncBlocklistsTask::DESCRIPTION` constant and `lang/en.yml`. The task body moved from `run()` into
   `sync(callable $writeLine)`.
 
+### If you script the WAF admin's ban or unban URLs
+
+`admin/waf/ban` and `admin/waf/unban` now accept only a POST that carries the session's security token
+(`SecurityID`), from a member with `WAF_ADMIN`. A GET answers 405, a missing or wrong token 400. The
+ban IP must be a single IPv4 or IPv6 address (400 otherwise); ranges were never matched by a ban. The
+admin screen itself no longer uses these URLs: unban and the manual ban are GridField actions on the
+Active Bans grid (`GridFieldUnbanAction`, `GridFieldManualBan`).
+
+If you subclass `WafAdmin`: `ban()` and `unban()` now take an `HTTPRequest` and return an
+`HTTPResponse` (they were `(): void`), the validated work is in `applyManualBan()` and `applyUnban()`,
+and `getManualBanFields()` is gone (kept commented out in the source).
+
 ### If you added patterns under `Restruct\SilverStripe\Waf\EarlyFilter`
 
 They never took effect, in any version: nothing reads that config. 1.6.0 comments the module's own copy

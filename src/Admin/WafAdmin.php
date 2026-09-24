@@ -8,6 +8,10 @@ use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
 use Restruct\SilverStripe\Waf\Tasks\SyncBlocklistsTask;
 use SilverStripe\Admin\LeftAndMain;
+use SilverStripe\Control\HTTPRequest;
+use SilverStripe\Control\HTTPResponse;
+use SilverStripe\Control\HTTPResponse_Exception;
+use SilverStripe\Core\Convert;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Forms\FieldList;
 use SilverStripe\Forms\Form;
@@ -27,6 +31,7 @@ use SilverStripe\Forms\TabSet;
 use SilverStripe\Forms\TextField;
 use SilverStripe\Security\Permission;
 use SilverStripe\Security\PermissionProvider;
+use SilverStripe\Security\SecurityToken;
 
 /**
  * CMS Admin interface for WAF management
@@ -57,7 +62,10 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
                 ),
                 Tab::create('BannedIPs', 'Banned IPs',
                     $this->getBannedIpsGrid(),
-                    $this->getManualBanFields()
+                    # The manual ban is now a component of the Active Bans grid (GridFieldManualBan):
+                    # this LiteralField nested a <form> inside the edit form, which browsers drop,
+                    # and posted without a security token.
+                    // $this->getManualBanFields()
                 ),
                 Tab::create('PrivilegedIPs', 'Privileged IPs',
                     $this->getPrivilegedIpsInfoField(),
@@ -115,17 +123,28 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
 
         $sourcesList = '';
         foreach ($stats['sources'] ?? [] as $name => $source) {
+            # Source names come from config and errors from a remote fetch: escape both
+            $name = Convert::raw2xml((string) $name);
             if (isset($source['error'])) {
-                $sourcesList .= "<li><strong>{$name}:</strong> <span style='color:red'>Error - {$source['error']}</span></li>";
+                $error = Convert::raw2xml((string) $source['error']);
+                $sourcesList .= "<li><strong>{$name}:</strong> <span style='color:red'>Error - {$error}</span></li>";
             } else {
-                $count = $source['count'] ?? 0;
+                $count = Convert::raw2xml((string) ($source['count'] ?? 0));
                 $sourcesList .= "<li><strong>{$name}:</strong> {$count} entries</li>";
             }
         }
 
-        $storageMode = WafStorageService::config()->get('storage_mode');
+        # Everything interpolated into the HTML below is escaped, including values that are
+        # numbers today: a LiteralField prints its content as-is.
+        $blockedToday = Convert::raw2xml((string) $blockedToday);
+        $totalBlocked = Convert::raw2xml((string) $totalBlocked);
+        $bannedCount = Convert::raw2xml((string) $bannedCount);
+        $syncedAt = Convert::raw2xml((string) $syncedAt);
+        $totalIps = Convert::raw2xml((string) ($stats['total_ips'] ?? 0));
+        $totalCidrs = Convert::raw2xml((string) ($stats['total_cidrs'] ?? 0));
+        $storageMode = Convert::raw2xml((string) WafStorageService::config()->get('storage_mode'));
         # The sake syntax differs per major (dev/tasks/<segment> on SS5, tasks:<name> on SS6)
-        $syncCommand = SyncBlocklistsTask::getSakeCommand();
+        $syncCommand = Convert::raw2xml(SyncBlocklistsTask::getSakeCommand());
 
         return LiteralField::create('WafStats', <<<HTML
 <div style="background: #f5f5f5; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
@@ -137,8 +156,8 @@ class WafAdmin extends LeftAndMain implements PermissionProvider
             <strong>Active Bans:</strong> {$bannedCount}
         </div>
         <div>
-            <strong>Blocklist IPs:</strong> {$stats['total_ips']}<br>
-            <strong>Blocklist CIDRs:</strong> {$stats['total_cidrs']}<br>
+            <strong>Blocklist IPs:</strong> {$totalIps}<br>
+            <strong>Blocklist CIDRs:</strong> {$totalCidrs}<br>
             <strong>Last Sync:</strong> {$syncedAt}
         </div>
         <div>
@@ -197,49 +216,63 @@ HTML
             'ExpiresAt' => 'Expires',
         ]);
 
+        # Unban and manual ban are GridField actions: GridField posts them with the form's security
+        # token and checks it before the action runs (GridField::gridFieldAlterAction()).
+        $config->addComponent(new GridFieldUnbanAction());
+        $config->addComponent(new GridFieldManualBan());
+
+        # Replaced in 1.6.0 by GridFieldUnbanAction. This was a GET link without a security token
+        # (cross-site request forgery), and the IP went into an inline onclick handler, where the
+        # HTML-escaped value is decoded again before the JavaScript runs (script injection).
         // Add unban action column
-        $columns->setFieldFormatting([
-            'IpAddress' => function ($value, $item) {
-                $url = $this->Link('unban') . '?ip=' . urlencode($value);
-                return "{$value} <a href='{$url}' class='btn btn-sm btn-outline-danger' onclick='return confirm(\"Unban {$value}?\")'>Unban</a>";
-            },
-        ]);
+        // $columns->setFieldFormatting([
+        //     'IpAddress' => function ($value, $item) {
+        //         $url = $this->Link('unban') . '?ip=' . urlencode($value);
+        //         return "{$value} <a href='{$url}' class='btn btn-sm btn-outline-danger' onclick='return confirm(\"Unban {$value}?\")'>Unban</a>";
+        //     },
+        // ]);
 
         return GridField::create('BannedIPs', 'Active Bans', $data, $config);
     }
 
-    protected function getManualBanFields(): LiteralField
-    {
-        $banUrl = $this->Link('ban');
-
-        return LiteralField::create('ManualBan', <<<HTML
-<div style="background: #fff3cd; padding: 15px; margin-top: 20px; border-radius: 4px; border: 1px solid #ffc107;">
-    <h4 style="margin-top: 0;">Manual Ban</h4>
-    <form method="post" action="{$banUrl}" style="display: flex; gap: 10px; align-items: end;">
-        <div>
-            <label>IP Address</label><br>
-            <input type="text" name="ip" required pattern="[0-9a-fA-F.:\/]+" placeholder="1.2.3.4" style="padding: 5px;">
-        </div>
-        <div>
-            <label>Duration (hours)</label><br>
-            <input type="number" name="hours" value="24" min="1" max="8760" style="padding: 5px; width: 80px;">
-        </div>
-        <div>
-            <label>Reason</label><br>
-            <input type="text" name="reason" value="Manual ban" style="padding: 5px; width: 200px;">
-        </div>
-        <button type="submit" class="btn btn-warning">Ban IP</button>
-    </form>
-</div>
-HTML
-        );
-    }
+    # Replaced in 1.6.0 by GridFieldManualBan. This markup nested a <form> inside the edit form
+    # (browsers drop the inner one, so the button never posted here), sent no security token and
+    # validated the IP only in the browser (pattern attribute).
+    // protected function getManualBanFields(): LiteralField
+    // {
+    //     $banUrl = $this->Link('ban');
+    //
+    //     return LiteralField::create('ManualBan', <<<HTML
+    // <div style="background: #fff3cd; padding: 15px; margin-top: 20px; border-radius: 4px; border: 1px solid #ffc107;">
+    // <h4 style="margin-top: 0;">Manual Ban</h4>
+    // <form method="post" action="{$banUrl}" style="display: flex; gap: 10px; align-items: end;">
+    //     <div>
+    //         <label>IP Address</label><br>
+    //         <input type="text" name="ip" required pattern="[0-9a-fA-F.:\/]+" placeholder="1.2.3.4" style="padding: 5px;">
+    //     </div>
+    //     <div>
+    //         <label>Duration (hours)</label><br>
+    //         <input type="number" name="hours" value="24" min="1" max="8760" style="padding: 5px; width: 80px;">
+    //     </div>
+    //     <div>
+    //         <label>Reason</label><br>
+    //         <input type="text" name="reason" value="Manual ban" style="padding: 5px; width: 200px;">
+    //     </div>
+    //     <button type="submit" class="btn btn-warning">Ban IP</button>
+    // </form>
+    // </div>
+    // HTML
+    //     );
+    // }
 
     protected function getPrivilegedIpsInfoField(): LiteralField
     {
         $baseLimit = WafMiddleware::config()->get('rate_limit_requests');
         $window = WafMiddleware::config()->get('rate_limit_window');
-        $exampleDouble = $baseLimit * 2;
+        # Config values printed into a LiteralField: escape them
+        $exampleDouble = Convert::raw2xml((string) ((int) $baseLimit * 2));
+        $baseLimit = Convert::raw2xml((string) $baseLimit);
+        $window = Convert::raw2xml((string) $window);
 
         return LiteralField::create('PrivilegedIpsInfo', <<<HTML
 <div style="background: #e8f5e9; padding: 15px; margin-bottom: 20px; border-radius: 4px; border: 1px solid #a5d6a7;">
@@ -287,9 +320,11 @@ HTML
 
         $tierRows = '';
         foreach ($tiers as $tierName => $tierConfig) {
-            $factor = $tierConfig['factor'] ?? 2.0;
+            # Tier names, factors and IPs come from YAML config: escape them
+            $tierName = Convert::raw2xml((string) $tierName);
+            $factor = Convert::raw2xml((string) ($tierConfig['factor'] ?? 2.0));
             $ips = $tierConfig['ips'] ?? [];
-            $ipList = implode(', ', $ips);
+            $ipList = Convert::raw2xml(implode(', ', (array) $ips));
             $tierRows .= "<tr><td><strong>{$tierName}</strong></td><td>{$factor}</td><td style='font-size: 12px;'>{$ipList}</td></tr>";
         }
 
@@ -314,25 +349,31 @@ HTML
 
         $sourceRows = '';
         foreach ($stats['sources'] ?? [] as $name => $source) {
+            # Names and URLs come from config, errors from a remote fetch: escape all of them
             $status = isset($source['error'])
-                ? "<span style='color:red'>Error: {$source['error']}</span>"
+                ? "<span style='color:red'>Error: " . Convert::raw2xml((string) $source['error']) . "</span>"
                 : "<span style='color:green'>OK</span>";
-            $count = $source['count'] ?? 0;
-            $url = $source['url'] ?? $source['file'] ?? '-';
+            $name = Convert::raw2xml((string) $name);
+            $count = Convert::raw2xml((string) ($source['count'] ?? 0));
+            $url = Convert::raw2xml((string) ($source['url'] ?? $source['file'] ?? '-'));
 
             $sourceRows .= "<tr><td>{$name}</td><td>{$count}</td><td>{$status}</td><td style='font-size:11px'>{$url}</td></tr>";
         }
 
+        $totalIps = Convert::raw2xml((string) ($stats['total_ips'] ?? 0));
+        $totalCidrs = Convert::raw2xml((string) ($stats['total_cidrs'] ?? 0));
+        $syncedAt = Convert::raw2xml((string) ($stats['synced_at'] ?? ''));
+        $syncedAgo = Convert::raw2xml($this->timeAgo($stats['synced_at'] ?? null));
         # The sake syntax differs per major (dev/tasks/<segment> on SS5, tasks:<name> on SS6)
-        $syncCommand = SyncBlocklistsTask::getSakeCommand();
+        $syncCommand = Convert::raw2xml(SyncBlocklistsTask::getSakeCommand());
 
         return LiteralField::create('BlocklistStats', <<<HTML
 <div style="padding: 15px;">
     <h3>Threat Intelligence Blocklist</h3>
     <p>
-        <strong>Total IPs:</strong> {$stats['total_ips']}<br>
-        <strong>Total CIDRs:</strong> {$stats['total_cidrs']}<br>
-        <strong>Last Sync:</strong> {$stats['synced_at']} ({$this->timeAgo($stats['synced_at'])})
+        <strong>Total IPs:</strong> {$totalIps}<br>
+        <strong>Total CIDRs:</strong> {$totalCidrs}<br>
+        <strong>Last Sync:</strong> {$syncedAt} ({$syncedAgo})
     </p>
 
     <h4>Sources</h4>
@@ -379,32 +420,112 @@ HTML
     // Actions
     // ========================================================================
 
-    public function unban(): void
+    /**
+     * Unban an IP: POST only, with the security token (param `SecurityID`), as a WAF admin.
+     * The admin screen itself unbans through GridFieldUnbanAction; this URL action is kept for
+     * scripted use and answers 405 / 400 / 403 to a request that fails those checks.
+     */
+    public function unban(HTTPRequest $request): HTTPResponse
     {
-        $ip = $this->getRequest()->getVar('ip');
-        if ($ip && $this->canEdit()) {
-            /** @var WafStorageService $storageService */
-            $storageService = Injector::inst()->get(WafStorageService::class);
-            $storageService->unbanIp($ip);
+        $this->checkStateChangingRequest($request);
+
+        $ip = trim((string) $request->postVar('ip'));
+        if ($ip !== '') {
+            $this->applyUnban($ip);
         }
 
-        $this->redirect($this->Link());
+        return $this->redirect($this->Link());
     }
 
-    public function ban(): void
+    /**
+     * Ban an IP manually: POST only, with the security token, as a WAF admin, and the IP must be
+     * a single valid IPv4 or IPv6 address (400 otherwise; bans are per address, not per range).
+     */
+    public function ban(HTTPRequest $request): HTTPResponse
     {
-        $request = $this->getRequest();
-        $ip = $request->postVar('ip');
-        $hours = (int) $request->postVar('hours') ?: 24;
-        $reason = $request->postVar('reason') ?: 'Manual ban';
+        $this->checkStateChangingRequest($request);
 
-        if ($ip && $this->canEdit()) {
-            /** @var WafStorageService $storageService */
-            $storageService = Injector::inst()->get(WafStorageService::class);
-            $storageService->banIp($ip, $hours * 3600, $reason);
+        $applied = $this->applyManualBan(
+            (string) $request->postVar('ip'),
+            (int) $request->postVar('hours'),
+            (string) $request->postVar('reason')
+        );
+        if (!$applied) {
+            $this->httpError(400, 'Not a valid IP address');
         }
 
-        $this->redirect($this->Link());
+        return $this->redirect($this->Link());
+    }
+
+    /**
+     * The WafAdmin a GridField action runs under, refusing (403) a member without WAF_ADMIN.
+     * GridField has already refused a request without a valid security token by then.
+     *
+     * @throws HTTPResponse_Exception
+     */
+    public static function fromGridField(GridField $gridField): self
+    {
+        $admin = $gridField->getForm()?->getController();
+        if (!$admin instanceof self || !$admin->canEdit()) {
+            throw new HTTPResponse_Exception('Not allowed to administer the WAF', 403);
+        }
+
+        return $admin;
+    }
+
+    /**
+     * Refuse a state-changing request that is not a POST, lacks a valid security token or comes
+     * from a member without WAF_ADMIN. Each refusal throws (via httpError), so nothing runs after it.
+     */
+    protected function checkStateChangingRequest(HTTPRequest $request): void
+    {
+        # A GET must never change state: links can be followed by anyone's browser (CSRF)
+        if (!$request->isPOST()) {
+            $this->httpError(405, 'This action accepts POST requests only');
+        }
+        # The token ties the request to this member's session, so another site cannot forge it
+        if (!SecurityToken::inst()->checkRequest($request)) {
+            $this->httpError(400, 'Invalid or missing security token');
+        }
+        if (!$this->canEdit()) {
+            $this->httpError(403, 'Not allowed to administer the WAF');
+        }
+    }
+
+    /**
+     * Ban an IP after validating it server-side. Used by the ban action and GridFieldManualBan;
+     * the caller has already checked the request (method, token, permission).
+     *
+     * @return bool false when $ip is not a single valid IPv4/IPv6 address (nothing is banned)
+     */
+    public function applyManualBan(string $ip, int $hours, string $reason): bool
+    {
+        $ip = trim($ip);
+        # Validated here, not only by the form's pattern attribute: a client-side check is advice.
+        # Bans are keyed per exact address, so a range such as 10.0.0.0/8 would never match.
+        if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
+            return false;
+        }
+        # Same bounds as the form field: 1 hour to 1 year, 24 hours when not given
+        $hours = $hours > 0 ? min($hours, 8760) : 24;
+        $reason = trim($reason) !== '' ? trim($reason) : 'Manual ban';
+
+        /** @var WafStorageService $storageService */
+        $storageService = Injector::inst()->get(WafStorageService::class);
+        $storageService->banIp($ip, $hours * 3600, $reason);
+
+        return true;
+    }
+
+    /**
+     * Remove a ban. Not validated as an IP on purpose: a malformed entry that is already stored
+     * must stay removable. Used by the unban action and GridFieldUnbanAction.
+     */
+    public function applyUnban(string $ip): void
+    {
+        /** @var WafStorageService $storageService */
+        $storageService = Injector::inst()->get(WafStorageService::class);
+        $storageService->unbanIp($ip);
     }
 
     // ========================================================================
