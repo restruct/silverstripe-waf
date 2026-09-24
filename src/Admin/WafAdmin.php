@@ -24,10 +24,8 @@ use SilverStripe\Forms\LiteralField;
 use SilverStripe\Forms\Tab;
 use SilverStripe\Forms\TabSet;
 use SilverStripe\Forms\TextField;
-use SilverStripe\ORM\ArrayList;
 use SilverStripe\Security\Permission;
 use SilverStripe\Security\PermissionProvider;
-use SilverStripe\View\ArrayData;
 
 /**
  * CMS Admin interface for WAF management
