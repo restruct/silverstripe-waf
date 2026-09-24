@@ -4,7 +4,7 @@
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
 declared `silverstripe/framework: ^5.0 || ^6.0` since 1.0, but on Silverstripe 6 the module fataled on
-the first flush. It is now tested on both majors: 165 tests, same count on Silverstripe 5.4 and 6.2.
+the first flush. It is now tested on both majors: 179 tests, same count on Silverstripe 5.4 and 6.2.
 See [UPGRADING.md](UPGRADING.md).
 
 ### Fixed
