@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.6.1 (unreleased)
+## 1.7.0 (2026-09-28)
 
 ### Fixed
 
