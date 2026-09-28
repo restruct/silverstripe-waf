@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.7.0 (2026-09-28)
+
+### Fixed
+
+- **With `silverstripe/versioned` installed, bans and unbans made in the CMS now reach visitors.**
+  Versioned segments every cache by reading mode. The CMS works in draft, while the WAF checks a
+  visitor before a stage is chosen, so the two sides used different cache entries. In practice: an
+  unban in the CMS did not lift a ban the visitor already had cached (in every storage mode) until the
+  ban expired; in the default `file` mode a CMS ban took up to 60 seconds to block a visitor who had
+  been checked just before; in `cache` mode a CMS ban never blocked anyone. The `Waf` cache is now
+  created with `disable-container: true`, so it is one cache for all reading modes. It also holds the
+  rate-limit counters, the merged privileged-IP list and the blocklists, which are per IP and not per
+  content stage either. Without `silverstripe/versioned` nothing changes. Covered by
+  `VersionedBanCacheTest` on Silverstripe 5 and 6.
+- **Behind a trusted reverse proxy or CDN, the WAF now judges the client, not the proxy.** The WAF
+  middleware runs ahead of Silverstripe's `TrustedProxyMiddleware`, so even with
+  `SS_TRUSTED_PROXY_IPS` set it saw the proxy's address: a ban on a client never matched, and one
+  client's violations auto-banned the proxy, which blocked every visitor behind it. The WAF now applies
+  the site's `TrustedProxyMiddleware` to the request before its checks; with `SS_TRUSTED_PROXY_IPS`
+  empty nothing changes. Covered by `TrustedProxyIpTest` on Silverstripe 5 and 6.
+- **The early filter (`_waf_early_filter.php`) also judges the client behind a trusted proxy.** It used
+  `REMOTE_ADDR` only, so its bans and violation counts hit the proxy. It now takes the forwarded address
+  when `REMOTE_ADDR` is in `SS_TRUSTED_PROXY_IPS`, choosing it the way `TrustedProxyMiddleware` does, so
+  both layers ban the same visitor. The filter runs before `.env` is loaded, so it reads the list from a
+  real environment variable, else from the config file the middleware writes for it (new key
+  `trusted_proxy_ips`), else trusts no one and uses `REMOTE_ADDR`. `WAF_WHITELIST_IPS` is now compared
+  with the client address too, so a whitelisted address of a trusted proxy no longer exempts the visitors behind it.
+  New README section "Running behind a proxy or CDN". Covered by `EarlyFilterProxyTest`.
+
 ## 1.6.0 (2026-09-25)
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already

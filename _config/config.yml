@@ -27,6 +27,15 @@ SilverStripe\Core\Injector\Injector:
     factory: SilverStripe\Core\Cache\CacheFactory
     constructor:
       namespace: 'Waf'
+      # One cache for every reading mode. With silverstripe/versioned installed, its ProxyCacheFactory
+      # wraps each cache in VersionedCacheAdapter, which suffixes every key with the current reading
+      # mode. The CMS bans and unbans in draft (AdminController sets Stage.Stage), while WafMiddleware
+      # checks visitors before VersionedHTTPMiddleware has chosen a stage (reading mode still null), so
+      # the two sides read and wrote different entries: a CMS unban left the visitor's cached ban in
+      # place until it expired, and in 'cache' storage mode a CMS ban never blocked anyone. Bans, rate
+      # counters and blocklists are per IP, not per content stage, so segmenting them is never wanted.
+      # Without versioned the core cache factory ignores this key.
+      disable-container: true
 
   # Blocklist service (singleton)
   Restruct\SilverStripe\Waf\Services\IpBlocklistService:

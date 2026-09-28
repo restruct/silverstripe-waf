@@ -10,6 +10,7 @@ use Restruct\SilverStripe\Waf\Services\WafStorageService;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\Middleware\HTTPMiddleware;
+use SilverStripe\Control\Middleware\TrustedProxyMiddleware;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injectable;
@@ -121,6 +122,12 @@ class WafMiddleware implements HTTPMiddleware
 
         // Write config file for the early filter (once per hour, lightweight)
         $this->writeEarlyFilterConfig();
+
+        # Resolve the client address first. WafMiddleware sits ahead of TrustedProxyMiddleware in the
+        # Director's middleware list, so without this getIP() is still REMOTE_ADDR: behind a trusted
+        # reverse proxy or CDN (SS_TRUSTED_PROXY_IPS) every ban, counter and auto-ban hit the proxy,
+        # which let banned clients through and banned all traffic after one attacker's violations.
+        $this->applyTrustedProxy($request);
 
         $ip = $request->getIP();
         $userAgent = $request->getHeader('User-Agent') ?? '';
@@ -234,6 +241,19 @@ class WafMiddleware implements HTTPMiddleware
     // ========================================================================
     // IP Checking
     // ========================================================================
+
+    /**
+     * Let the site's TrustedProxyMiddleware set the client IP (and host, scheme) on the request now,
+     * instead of after this middleware. It is the same service the Director runs, so it trusts exactly
+     * the proxies in SS_TRUSTED_PROXY_IPS and does nothing when that is empty. Running it again later
+     * in the chain changes nothing: the request IP is then the client, which is not a trusted proxy.
+     * Relying on middleware order instead would be fragile: the order follows config merge order.
+     */
+    protected function applyTrustedProxy(HTTPRequest $request): void
+    {
+        Injector::inst()->get(TrustedProxyMiddleware::class)
+            ->process($request, fn(HTTPRequest $request) => HTTPResponse::create());
+    }
 
     protected function isWhitelistedIp(string $ip): bool
     {
@@ -711,6 +731,10 @@ class WafMiddleware implements HTTPMiddleware
             'early_ban_enabled' => $this->config()->get('early_ban_enabled'),
             'ban_threshold' => $this->config()->get('ban_threshold'),
             'ban_duration' => $this->config()->get('ban_duration'),
+            # The early filter runs before the framework has loaded .env, so it cannot read
+            # SS_TRUSTED_PROXY_IPS itself when the variable lives there. Pass on the list exactly as
+            # TrustedProxyMiddleware has it (env var or YAML), so both layers trust the same proxies.
+            'trusted_proxy_ips' => (string) Injector::inst()->get(TrustedProxyMiddleware::class)->getTrustedProxyIPs(),
         ];
 
         @file_put_contents($configFile, json_encode($config));

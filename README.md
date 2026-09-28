@@ -63,6 +63,43 @@ use SilverStripe\Control\HTTPApplication;
 
 **Why before `use` statements?** The `use` statements are just namespace aliases (resolved at compile time), so the practical difference is minimal. However, placing the WAF filter first makes the security-first intent clear and ensures blocked requests parse the absolute minimum PHP before exiting.
 
+## Running behind a proxy or CDN
+
+Behind a reverse proxy, load balancer or CDN (Cloudflare, a Forge load balancer, Varnish), every request
+arrives from the proxy's address, and the visitor's address is in the `X-Forwarded-For` (or `Client-IP`)
+header. Tell Silverstripe which proxies to believe, in `.env`:
+
+```
+SS_TRUSTED_PROXY_IPS="10.0.0.0/8,172.16.0.0/12"
+```
+
+A comma-separated list of addresses and CIDR ranges (IPv4 and IPv6), or `*` for any sender. Only use `*`
+when the web server cannot be reached except through the proxy: the header is set by whoever sends the
+request, so trusting it from anyone lets anyone choose the address they are judged by.
+
+Both layers of the WAF then judge the visitor, not the proxy:
+
+- **The middleware** takes the client address from Silverstripe's `TrustedProxyMiddleware`, with the same
+  headers and the same choice from a list of addresses.
+- **The early filter** runs before the framework and before `.env` is loaded. It takes the list from a real
+  environment variable when there is one (set in the web server or PHP-FPM config), otherwise from the
+  config file the middleware writes for it (under the system temp directory, refreshed at most hourly).
+  Until the middleware has written that file, for example on the first request after a deploy, the early
+  filter uses the connecting address and ignores the header. It never believes the header from a sender
+  that is not on the list.
+
+**The proxy must overwrite `X-Forwarded-For`, not append to it.** Like Silverstripe itself, the WAF picks
+the left-most public address from that header. A proxy that appends to a header the client already sent
+leaves the client's own (possibly fake) entry first, so the client chooses the address it is judged by.
+Configure the proxy to replace the header with the connecting address (Cloudflare and most managed load
+balancers do this; for nginx use `proxy_set_header X-Forwarded-For $remote_addr;` rather than
+`$proxy_add_x_forwarded_for`), or restore the address in the web server as described below.
+
+Without `SS_TRUSTED_PROXY_IPS`, both layers see only the proxy's address: bans and rate limits then hit
+the proxy, and one attacker's violations can ban every visitor behind it. The alternative is to have the
+web server restore the client address before PHP runs (nginx `real_ip`, Apache `mod_remoteip`), in which
+case `SS_TRUSTED_PROXY_IPS` is not needed.
+
 ## Quick Configuration
 
 All configuration is in `_config/config.yml` with extensive inline comments. The defaults work well for most sites. Common overrides:

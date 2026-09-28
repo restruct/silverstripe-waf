@@ -384,8 +384,9 @@ class WafAdminActionsTest extends FunctionalTest
         Config::modify()->set(WafMiddleware::class, 'privileged_tiers', [
             '<i>tier</i>' => ['factor' => '<u>2</u>', 'ips' => ['<s>203.0.113.9</s>']],
         ]);
-        # Blocklist stats from a stub service, not the cache: with silverstripe/versioned installed the
-        # cache is namespaced per reading mode, so a value set here would not be seen by the admin request.
+        # Blocklist stats from a stub service, so the test does not depend on the blocklist feeds or on
+        # what the cache happens to hold. (Since 1.7.0 the WAF cache opts out of versioned's per-reading-
+        # mode key segmentation, so the old reason given here, a split cache, no longer applies.)
         Injector::inst()->registerService(new class extends IpBlocklistService {
             public function getStats(): array
             {
