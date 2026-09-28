@@ -14,6 +14,13 @@
   rate-limit counters, the merged privileged-IP list and the blocklists, which are per IP and not per
   content stage either. Without `silverstripe/versioned` nothing changes. Covered by
   `VersionedBanCacheTest` on Silverstripe 5 and 6.
+- **Behind a trusted reverse proxy or CDN, the WAF now judges the client, not the proxy.** The WAF
+  middleware runs ahead of Silverstripe's `TrustedProxyMiddleware`, so even with
+  `SS_TRUSTED_PROXY_IPS` set it saw the proxy's address: a ban on a client never matched, and one
+  client's violations auto-banned the proxy, which blocked every visitor behind it. The WAF now applies
+  the site's `TrustedProxyMiddleware` to the request before its checks; with `SS_TRUSTED_PROXY_IPS`
+  empty nothing changes. The pre-framework early filter (`_waf_early_filter.php`) still uses
+  `REMOTE_ADDR`. Covered by `TrustedProxyIpTest` on Silverstripe 5 and 6.
 
 ## 1.6.0 (2026-09-25)
 
