@@ -58,6 +58,8 @@ if (file_exists($wafConfigFile)) {
         $earlyBanConfig['enabled'] = $loadedConfig['early_ban_enabled'] ?? true;
         $earlyBanConfig['threshold'] = (int) ($loadedConfig['ban_threshold'] ?? 10);
         $earlyBanConfig['duration'] = (int) ($loadedConfig['ban_duration'] ?? 3600);
+        // Trusted proxies as the framework resolved them (SS_TRUSTED_PROXY_IPS, usually from .env)
+        $wafConfigTrustedProxies = (string) ($loadedConfig['trusted_proxy_ips'] ?? '');
     }
 }
 
@@ -89,7 +91,18 @@ $legitimatePhpFiles = [
 
 $uri = $_SERVER['REQUEST_URI'] ?? '';
 $uriPath = parse_url($uri, PHP_URL_PATH) ?? '';
-$ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+// The client address: REMOTE_ADDR, or the forwarded address when REMOTE_ADDR is a trusted proxy.
+// Behind a reverse proxy or CDN, REMOTE_ADDR is the proxy, so bans and violation counts would hit
+// the proxy and with it every visitor behind it. The header is only believed from a proxy listed in
+// SS_TRUSTED_PROXY_IPS, as TrustedProxyMiddleware does: anyone can send X-Forwarded-For.
+// That list is normally in .env, which the framework loads after this file has run. So: a real
+// environment variable first (web server or FPM config), else the copy the middleware writes into
+// config.json on an earlier request, else nothing trusted - REMOTE_ADDR, never the header blindly.
+$wafTrustedProxies = (string) getenv('SS_TRUSTED_PROXY_IPS');
+if (trim($wafTrustedProxies) === '') {
+    $wafTrustedProxies = $wafConfigTrustedProxies ?? '';
+}
+$ip = wafClientIp($_SERVER, $wafTrustedProxies);
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 
 // Skip whitelisted IPs
@@ -136,6 +149,106 @@ if ($config['detect_php_probes']) {
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * The client IP for this request: the forwarded address when REMOTE_ADDR is a trusted proxy, otherwise
+ * REMOTE_ADDR ('unknown' when there is none). Mirrors TrustedProxyMiddleware on Silverstripe 5 and 6:
+ * the same headers in the same order (Client-IP, then X-Forwarded-For) and the same choice from a list
+ * (see wafIpFromHeaderValue()), so the early filter and the middleware ban the same visitor.
+ */
+function wafClientIp(array $server, string $trustedProxies): string
+{
+    $remoteAddr = (string) ($server['REMOTE_ADDR'] ?? '');
+    if ($remoteAddr === '') {
+        return 'unknown';
+    }
+    if (!wafIsTrustedProxy($remoteAddr, $trustedProxies)) {
+        return $remoteAddr;
+    }
+    foreach (['HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR'] as $header) {
+        $value = trim((string) ($server[$header] ?? ''));
+        if ($value === '') {
+            continue;
+        }
+        $forwarded = wafIpFromHeaderValue($value);
+        if ($forwarded !== null) {
+            return $forwarded;
+        }
+    }
+    return $remoteAddr;
+}
+
+/**
+ * Whether $ip is in the trusted proxy list, read like TrustedProxyMiddleware::isTrustedProxy():
+ * empty or 'none' trusts nobody, '*' trusts everyone, otherwise a comma-separated list of addresses
+ * and CIDR ranges (IPv4 and IPv6).
+ */
+function wafIsTrustedProxy(string $ip, string $trustedProxies): bool
+{
+    $trustedProxies = trim($trustedProxies);
+    if ($trustedProxies === '' || $trustedProxies === 'none') {
+        return false;
+    }
+    if ($trustedProxies === '*') {
+        return true;
+    }
+    foreach (preg_split('/\s*,\s*/', $trustedProxies) as $entry) {
+        if ($entry !== '' && wafIpMatches($ip, $entry)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Whether $ip is the address $entry, or falls in the CIDR range $entry. The framework uses Symfony's
+ * IpUtils::checkIp() for this; this file runs before the autoloader, so it compares the packed bytes.
+ */
+function wafIpMatches(string $ip, string $entry): bool
+{
+    [$subnet, $bits] = str_contains($entry, '/') ? explode('/', $entry, 2) : [$entry, null];
+    $ipBytes = @inet_pton($ip);
+    $subnetBytes = @inet_pton($subnet);
+    // Unparseable, or IPv4 against IPv6: no match
+    if ($ipBytes === false || $subnetBytes === false || strlen($ipBytes) !== strlen($subnetBytes)) {
+        return false;
+    }
+    $maxBits = strlen($ipBytes) * 8;
+    $bits = $bits === null ? $maxBits : (ctype_digit($bits) ? (int) $bits : -1);
+    if ($bits < 0 || $bits > $maxBits) {
+        return false;
+    }
+    // Whole bytes first, then the remaining bits of the next byte under a mask
+    $fullBytes = intdiv($bits, 8);
+    if (substr($ipBytes, 0, $fullBytes) !== substr($subnetBytes, 0, $fullBytes)) {
+        return false;
+    }
+    $remainder = $bits % 8;
+    if ($remainder === 0) {
+        return true;
+    }
+    $mask = chr((0xFF << (8 - $remainder)) & 0xFF);
+    return ($ipBytes[$fullBytes] & $mask) === ($subnetBytes[$fullBytes] & $mask);
+}
+
+/**
+ * The address to use from a forwarding header, chosen as TrustedProxyMiddleware::getIPFromHeaderValue()
+ * does: the first public address in the list, else the first non-private one, else the first valid one.
+ * (Silverstripe 5 uses these filter_var flags; Silverstripe 6 the equivalent Symfony Ip constraints.)
+ */
+function wafIpFromHeaderValue(string $headerValue): ?string
+{
+    $ips = preg_split('/\s*,\s*/', $headerValue);
+    $filters = [FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE, FILTER_FLAG_NO_PRIV_RANGE, 0];
+    foreach ($filters as $flags) {
+        foreach ($ips as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, $flags) !== false) {
+                return $ip;
+            }
+        }
+    }
+    return null;
+}
 
 /**
  * Log the blocked request and return 403

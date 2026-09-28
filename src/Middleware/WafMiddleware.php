@@ -731,6 +731,10 @@ class WafMiddleware implements HTTPMiddleware
             'early_ban_enabled' => $this->config()->get('early_ban_enabled'),
             'ban_threshold' => $this->config()->get('ban_threshold'),
             'ban_duration' => $this->config()->get('ban_duration'),
+            # The early filter runs before the framework has loaded .env, so it cannot read
+            # SS_TRUSTED_PROXY_IPS itself when the variable lives there. Pass on the list exactly as
+            # TrustedProxyMiddleware has it (env var or YAML), so both layers trust the same proxies.
+            'trusted_proxy_ips' => (string) Injector::inst()->get(TrustedProxyMiddleware::class)->getTrustedProxyIPs(),
         ];
 
         @file_put_contents($configFile, json_encode($config));

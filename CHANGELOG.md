@@ -19,8 +19,15 @@
   `SS_TRUSTED_PROXY_IPS` set it saw the proxy's address: a ban on a client never matched, and one
   client's violations auto-banned the proxy, which blocked every visitor behind it. The WAF now applies
   the site's `TrustedProxyMiddleware` to the request before its checks; with `SS_TRUSTED_PROXY_IPS`
-  empty nothing changes. The pre-framework early filter (`_waf_early_filter.php`) still uses
-  `REMOTE_ADDR`. Covered by `TrustedProxyIpTest` on Silverstripe 5 and 6.
+  empty nothing changes. Covered by `TrustedProxyIpTest` on Silverstripe 5 and 6.
+- **The early filter (`_waf_early_filter.php`) also judges the client behind a trusted proxy.** It used
+  `REMOTE_ADDR` only, so its bans and violation counts hit the proxy. It now takes the forwarded address
+  when `REMOTE_ADDR` is in `SS_TRUSTED_PROXY_IPS`, choosing it the way `TrustedProxyMiddleware` does, so
+  both layers ban the same visitor. The filter runs before `.env` is loaded, so it reads the list from a
+  real environment variable, else from the config file the middleware writes for it (new key
+  `trusted_proxy_ips`), else trusts no one and uses `REMOTE_ADDR`. `WAF_WHITELIST_IPS` is now compared
+  with the client address too, so a whitelisted address of a trusted proxy no longer exempts the visitors behind it.
+  New README section "Running behind a proxy or CDN". Covered by `EarlyFilterProxyTest`.
 
 ## 1.6.0 (2026-09-25)
 
