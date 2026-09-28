@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.1 (unreleased)
+
+### Fixed
+
+- **With `silverstripe/versioned` installed, bans and unbans made in the CMS now reach visitors.**
+  Versioned segments every cache by reading mode. The CMS works in draft, while the WAF checks a
+  visitor before a stage is chosen, so the two sides used different cache entries. In practice: an
+  unban in the CMS did not lift a ban the visitor already had cached (in every storage mode) until the
+  ban expired; in the default `file` mode a CMS ban took up to 60 seconds to block a visitor who had
+  been checked just before; in `cache` mode a CMS ban never blocked anyone. The `Waf` cache is now
+  created with `disable-container: true`, so it is one cache for all reading modes. It also holds the
+  rate-limit counters, the merged privileged-IP list and the blocklists, which are per IP and not per
+  content stage either. Without `silverstripe/versioned` nothing changes. Covered by
+  `VersionedBanCacheTest` on Silverstripe 5 and 6.
+
 ## 1.6.0 (2026-09-25)
 
 Silverstripe 6 support that actually runs, on the same line as Silverstripe 5. `composer.json` already
