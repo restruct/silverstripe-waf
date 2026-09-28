@@ -88,6 +88,13 @@ Both layers of the WAF then judge the visitor, not the proxy:
   filter uses the connecting address and ignores the header. It never believes the header from a sender
   that is not on the list.
 
+**The proxy must overwrite `X-Forwarded-For`, not append to it.** Like Silverstripe itself, the WAF picks
+the left-most public address from that header. A proxy that appends to a header the client already sent
+leaves the client's own (possibly fake) entry first, so the client chooses the address it is judged by.
+Configure the proxy to replace the header with the connecting address (Cloudflare and most managed load
+balancers do this; for nginx use `proxy_set_header X-Forwarded-For $remote_addr;` rather than
+`$proxy_add_x_forwarded_for`), or restore the address in the web server as described below.
+
 Without `SS_TRUSTED_PROXY_IPS`, both layers see only the proxy's address: bans and rate limits then hit
 the proxy, and one attacker's violations can ban every visitor behind it. The alternative is to have the
 web server restore the client address before PHP runs (nginx `real_ip`, Apache `mod_remoteip`), in which
