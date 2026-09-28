@@ -214,7 +214,10 @@ function wafIpMatches(string $ip, string $entry): bool
         return false;
     }
     $maxBits = strlen($ipBytes) * 8;
-    $bits = $bits === null ? $maxBits : (ctype_digit($bits) ? (int) $bits : -1);
+    # No ctype_digit(): ctype is an optional extension (shared on e.g. Debian/Ubuntu builds), and a fatal
+    # here, before the framework, would take every proxied request down. PCRE is always compiled in.
+    //$bits = $bits === null ? $maxBits : (ctype_digit($bits) ? (int) $bits : -1);
+    $bits = $bits === null ? $maxBits : (preg_match('/^\d{1,3}$/', $bits) ? (int) $bits : -1);
     if ($bits < 0 || $bits > $maxBits) {
         return false;
     }
