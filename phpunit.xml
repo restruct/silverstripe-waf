@@ -27,6 +27,8 @@
     <testsuites>
         <testsuite name="WAF Unit Tests">
             <directory>tests</directory>
+            <!-- Playwright specs and their scratch-only fixtures, run by the browser-test harness -->
+            <exclude>tests/browser</exclude>
         </testsuite>
     </testsuites>
 
