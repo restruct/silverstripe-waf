@@ -504,6 +504,22 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * _waf_datadir.php can be loaded from two places in one request (the early filter requires its own
+     * copy, the middleware the one next to its class; two installs of the module, or a copy under _dev,
+     * make those different files). That must not be a "Cannot redeclare" fatal.
+     */
+    public function testDataDirHelpersLoadTwiceFromTwoCopies(): void
+    {
+        $copy = $this->tmpDir . '/copy/_waf_datadir.php';
+        mkdir(dirname($copy));
+        copy($this->moduleRoot() . '/_waf_datadir.php', $copy);
+
+        $out = $this->runCode('require ' . var_export($copy, true) . '; echo "LOADED";');
+
+        $this->assertSame('LOADED', trim($out));
+    }
+
+    /**
      * The name of the filter's data dir (waf-<uid>-<hash>), as the filter's process computes it.
      */
     private function dataDirName(): string
