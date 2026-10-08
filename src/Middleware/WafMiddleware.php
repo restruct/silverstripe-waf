@@ -738,7 +738,11 @@ class WafMiddleware implements HTTPMiddleware
         $configFile = $wafDataDir . '/config.json';
 
         # Only write if file doesn't exist or is older than 1 hour
-        if (file_exists($configFile) && @filemtime($configFile) > time() - 3600) {
+        //if (file_exists($configFile) && @filemtime($configFile) > time() - 3600) {
+        # ...and is ours: a config.json that is not a regular file of this user (the filter does not
+        # read it) or has an mtime in the future (it would count as fresh for ever) is replaced now
+        $configStat = wafDataFileStat($wafDataDir, 'config.json');
+        if ($configStat !== null && $configStat['mtime'] > time() - 3600 && $configStat['mtime'] <= time()) {
             return;
         }
 

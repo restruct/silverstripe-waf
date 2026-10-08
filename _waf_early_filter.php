@@ -56,9 +56,13 @@ $wafDataDir = wafEarlyDataDir(__DIR__, false);
 
 // Read config from shared file (written by middleware from YAML config values)
 $earlyBanConfig = ['enabled' => true, 'threshold' => 10, 'duration' => 3600];
-$wafConfigFile = $wafDataDir !== null ? $wafDataDir . '/config.json' : null;
-if ($wafConfigFile !== null && file_exists($wafConfigFile)) {
-    $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
+//$wafConfigFile = $wafDataDir !== null ? $wafDataDir . '/config.json' : null;
+//if ($wafConfigFile !== null && file_exists($wafConfigFile)) {
+//    $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
+# Only a regular file of our own user is read (no symlink, nothing someone else left in the dir)
+$wafConfigJson = $wafDataDir !== null ? wafReadDataFile($wafDataDir, 'config.json') : null;
+if ($wafConfigJson !== null) {
+    $loadedConfig = json_decode($wafConfigJson, true);
     if (is_array($loadedConfig)) {
         $earlyBanConfig['enabled'] = $loadedConfig['early_ban_enabled'] ?? true;
         $earlyBanConfig['threshold'] = (int) ($loadedConfig['ban_threshold'] ?? 10);
@@ -120,8 +124,12 @@ if (in_array($ip, $whitelistedIps, true)) {
 //if ($earlyBanConfig['enabled'] && is_dir($wafDataDir)) {
 if ($earlyBanConfig['enabled'] && $wafDataDir !== null) {
     $banFile = $wafDataDir . '/ban_' . md5($ip);
-    if (file_exists($banFile)) {
-        $expires = (int) @file_get_contents($banFile);
+    //if (file_exists($banFile)) {
+    //    $expires = (int) @file_get_contents($banFile);
+    # Only a regular file of our own user counts as a ban (lstat(): same cost as the file_exists())
+    $banContent = wafReadDataFile($wafDataDir, basename($banFile));
+    if ($banContent !== null) {
+        $expires = (int) $banContent;
         if ($expires > time()) {
             wafLogAndBlock('early_ban', 'Repeat offender', $ip, $uri, $userAgent);
         }
@@ -334,9 +342,13 @@ function wafTrackViolation(string $ip): void
     // Read current violation data
     $count = 0;
     $firstSeen = time();
-    $data = @file_get_contents($violFile);
+    //$data = @file_get_contents($violFile);
+    # A counter that is not a regular file of ours is not ours to continue: start over (the write below
+    # replaces it)
+    $data = wafReadDataFile($wafDataDir, basename($violFile));
 
-    if ($data !== false) {
+    //if ($data !== false) {
+    if ($data !== null) {
         $parts = explode(':', $data, 2);
         $count = (int) ($parts[0] ?? 0);
         $firstSeen = (int) ($parts[1] ?? time());

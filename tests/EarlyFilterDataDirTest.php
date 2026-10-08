@@ -345,6 +345,75 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * The filter only reads data files that are regular files of its own user: a symlink in the data
+     * dir (left there while the dir was open, or made by someone who could write to it once) is not
+     * followed to a ban or a trust-everyone config somewhere else. The owner half of the check needs a
+     * second user to test and is covered by reading: see wafDataFileStat().
+     */
+    public function testSymlinkedDataFilesAreNotRead(): void
+    {
+        $dataDir = $this->tmpDir . '/' . $this->dataDirName();
+        mkdir($dataDir, 0700);
+        $elsewhere = $this->tmpDir . '/elsewhere';
+        $this->plantAttackerFiles($elsewhere, self::CLIENT);
+        symlink($elsewhere . '/ban_' . md5(self::CLIENT), $dataDir . '/ban_' . md5(self::CLIENT));
+        symlink($elsewhere . '/config.json', $dataDir . '/config.json');
+        # A real ban of ours on OTHER: blocks OTHER itself, and anyone who can pass for OTHER
+        file_put_contents($dataDir . '/ban_' . md5(self::OTHER), (string) (time() + 3600));
+
+        $this->assertSame(
+            [
+                'banned through the symlinked ban' => 'PASSED',
+                'spoofed via the symlinked config' => 'PASSED',
+                'control: a real ban file is read' => 'FORBIDDEN',
+            ],
+            [
+                'banned through the symlinked ban' => $this->runFilter(self::CLIENT, []),
+                'spoofed via the symlinked config' => $this->runFilter('1.1.1.1', ['X-Forwarded-For' => self::OTHER]),
+                'control: a real ban file is read' => $this->runFilter(self::OTHER, []),
+            ]
+        );
+    }
+
+    /**
+     * The middleware rewrites a config.json whose mtime is in the future (it would otherwise count as
+     * fresh for ever and never be replaced) or that is not a regular file of ours.
+     */
+    public function testMiddlewareReplacesAConfigItDidNotWrite(): void
+    {
+        $parent = $this->tmpDir . '/rewrite';
+        putenv('WAF_DATA_DIR=' . $parent);
+        $dataDir = $parent . '/' . $this->dataDirName();
+        mkdir($dataDir, 0700, true);
+        $planted = json_encode(['early_ban_enabled' => false, 'trusted_proxy_ips' => '*']);
+        $read = function () use ($dataDir): ?string {
+            clearstatcache();
+            $config = json_decode((string) @file_get_contents($dataDir . '/config.json'), true);
+            return is_link($dataDir . '/config.json') ? 'symlink' : ($config['trusted_proxy_ips'] ?? null);
+        };
+
+        file_put_contents($dataDir . '/config.json', $planted);
+        touch($dataDir . '/config.json', time() + 86400);
+        $this->invokeWriteEarlyFilterConfig('10.0.0.0/8');
+        $future = $read();
+
+        unlink($dataDir . '/config.json');
+        file_put_contents($this->tmpDir . '/planted.json', $planted);
+        symlink($this->tmpDir . '/planted.json', $dataDir . '/config.json');
+        $this->invokeWriteEarlyFilterConfig('10.0.0.0/8');
+        $symlink = $read();
+
+        # Control: a fresh config.json of ours is left as it is (written at most hourly)
+        $this->invokeWriteEarlyFilterConfig('192.168.0.0/16');
+        $fresh = $read();
+
+        $this->assertSame(
+            ['future mtime' => '10.0.0.0/8', 'symlink' => '10.0.0.0/8', 'fresh, ours' => '10.0.0.0/8'],
+            ['future mtime' => $future, 'symlink' => $symlink, 'fresh, ours' => $fresh]
+        );
+    }
+
+    /**
      * WAF_DATA_DIR may name a dir that holds other things (the project root, a shared data dir): the WAF
      * keeps its files in a waf-<uid>-<hash> dir of its own inside it, and never changes the mode of the
      * dir it was given. 1.8.0-dev used WAF_DATA_DIR itself and chmodded it to 0700.

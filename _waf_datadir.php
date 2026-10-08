@@ -194,6 +194,42 @@ function wafIsSafeParent(string $parent): bool
 }
 
 /**
+ * lstat() of $dir/$name when it is a regular file of this process user, else null (missing, a symlink,
+ * a dir, or someone else's).
+ *
+ * The data dir is private, but a dir that was open once (or a 0700 dir someone chmods back) can still
+ * hold what others put there while it was: a dir of ours that is now 0700 says nothing about the files
+ * in it (waf#9 review). So each data file is checked on its own before it is believed. Without posix
+ * the owner is not known and only the type is checked. lstat(), so a symlink is never followed.
+ */
+function wafDataFileStat(string $dir, string $name): ?array
+{
+    $path = $dir . DIRECTORY_SEPARATOR . $name;
+    clearstatcache(true, $path);
+    $stat = @lstat($path);
+    if ($stat === false || ($stat['mode'] & 0170000) !== 0100000) {
+        return null;
+    }
+    if (DIRECTORY_SEPARATOR !== '\\' && function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid()) {
+        return null;
+    }
+    return $stat;
+}
+
+/**
+ * The contents of $dir/$name when it is a regular file of this process user (wafDataFileStat()), else
+ * null: anything else is treated as if the file was not there.
+ */
+function wafReadDataFile(string $dir, string $name): ?string
+{
+    if (wafDataFileStat($dir, $name) === null) {
+        return null;
+    }
+    $content = @file_get_contents($dir . DIRECTORY_SEPARATOR . $name);
+    return $content === false ? null : $content;
+}
+
+/**
  * Write $content to $dir/$name, mode 0600, atomically: into a new temp file in the same dir (created
  * exclusively, so it never follows a planted name), then rename() over the target.
  */
