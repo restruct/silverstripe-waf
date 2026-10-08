@@ -83,7 +83,8 @@ Both layers of the WAF then judge the visitor, not the proxy:
   headers and the same choice from a list of addresses.
 - **The early filter** runs before the framework and before `.env` is loaded. It takes the list from a real
   environment variable when there is one (set in the web server or PHP-FPM config), otherwise from the
-  config file the middleware writes for it (under the system temp directory, refreshed at most hourly).
+  config file the middleware writes for it (in the early filter's private data dir, refreshed at most
+  hourly; see [Early Filter](docs/early-filter.md#where-the-early-filter-keeps-its-files)).
   Until the middleware has written that file, for example on the first request after a deploy, the early
   filter uses the connecting address and ignores the header. It never believes the header from a sender
   that is not on the list.

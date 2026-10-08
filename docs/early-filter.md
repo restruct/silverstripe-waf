@@ -100,7 +100,53 @@ The early filter runs before the Silverstripe framework, so it can't read YAML c
 2. The early filter reads this JSON file to get the current config values
 3. If the config file doesn't exist yet (first request), the early filter uses sensible defaults (threshold: 10, duration: 3600)
 
-Both components derive the shared data directory path from the module's installation path, so they always agree on where to find the files.
+Both components work out the data directory the same way (from the module's installation path and the
+real process environment), so they always agree on where to find the files.
+
+### Where the early filter keeps its files
+
+The ban files, violation counters and `config.json` live in a directory named `waf-<uid>-<hash>` (one
+per process user and module install) that only the PHP process user can use. Its parent is:
+
+- `WAF_DATA_DIR`, when set: an absolute path, for example a directory inside the project. The WAF makes
+  its own `waf-<uid>-<hash>` directory inside it and never changes or cleans `WAF_DATA_DIR` itself, so it
+  can be a directory that also holds other things; a dedicated one is still the tidier choice. It must
+  be a **real environment variable** (web server or PHP-FPM pool config, e.g.
+  `env[WAF_DATA_DIR] = ...`), not a line in `.env`: the early filter runs before Silverstripe loads
+  `.env`. A value only in `.env` is ignored by both layers, and the middleware logs a warning saying so.
+- Otherwise the system temp directory.
+
+The directory is created with mode `0700` and its files with `0600`, written atomically. It is only used
+while all of this holds, checked on one `lstat()` so the answer cannot change halfway:
+
+- it is a real directory (not a symlink) owned by the process user that nobody else can write to; one of
+  ours that others can only read is tightened to `0700`;
+- its parent belongs to root or the process user, and is not writable by group or others unless it is
+  sticky like `/tmp` (otherwise someone could swap the directory for another right after the check).
+  So a `WAF_DATA_DIR` that is a `0775` directory shared with a deploy group is refused: use a dedicated
+  parent of the web server user with mode `0755` or `0700`.
+
+Anything else is refused. A refused directory means no early bans and the built-in defaults for the
+early filter (pattern blocking still works), and the middleware logs
+`[WAF] no private data dir for the early filter ...` at most once an hour.
+
+Inside it, a file is only believed when it is a regular file of the process user: a symlink, or a file
+someone else left there while the directory was open, counts as absent. The middleware rewrites a
+`config.json` that fails that check or has a modification time in the future. The occasional cleanup
+only deletes the WAF's own names (`ban_<md5>`, `viol_<md5>`, and `.tmp-<hex>` left by an interrupted
+write).
+
+Up to 1.7.0 the files were in `<system temp dir>/waf_<hash>`, readable by everyone and trusted as found,
+so on a host with a shared temp directory other users could read them or plant their own (waf#9). That
+directory is no longer read. The middleware removes it when it is a real directory owned by the process
+user, deleting only the files 1.7.0 wrote there (`config.json`, `ban_*`, `viol_*`); with anything else
+in it, the directory stays. Telling the owner needs PHP's `posix` extension: without it the old
+directory is left in place, unused, for you to delete. Early bans and violation counts in it do not
+carry over, so on upgrade they start from zero (bans last `ban_duration`, one hour by default).
+
+On a shared host, setting `WAF_DATA_DIR` to a directory inside your own account is the stronger choice:
+the default name is predictable, so another user can pre-create it. They cannot read or change what
+the WAF keeps there, but the refused directory switches the early ban off until you set `WAF_DATA_DIR`.
 
 ## Pattern Philosophy
 

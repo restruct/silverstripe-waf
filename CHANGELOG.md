@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.8.0 (2026-10-08)
+
+### Fixed
+
+- **Security: the early filter keeps its files private to the PHP user** (waf#9). Its ban files,
+  violation counters and `config.json` were in `<system temp dir>/waf_<hash>`, a `0755` directory with
+  `0644` files at a predictable name, trusted as found. On a host where users or sites share the temp
+  dir, anyone could read them (including the trusted proxy list) or plant their own: lift or place early
+  bans, or set `trusted_proxy_ips` to `*` and choose through `X-Forwarded-For` which address is banned.
+  The directory is now `waf-<uid>-<hash>` (per process user), `0700` with `0600` files written
+  atomically, inside the system temp dir or `WAF_DATA_DIR`. It is only used while it is a real directory
+  (not a symlink) owned by the PHP user that nobody else can write to, in a parent owned by root or the
+  PHP user that group and others cannot write to unless it is sticky like `/tmp` (so a `0775`
+  deploy-group `WAF_DATA_DIR` is refused), all decided on one `lstat()`; otherwise the early ban is off
+  and the middleware logs why, at most hourly. Inside it only regular files of the PHP user are read, so
+  a symlink or a file someone left there while it was open counts as absent, and a `config.json` that is
+  not ours or is dated in the future is rewritten. The cleanup only deletes the WAF's own file names.
+  The old directory is no longer read; the middleware deletes the files 1.7.0 wrote there and the
+  directory when it is ours, which needs PHP's `posix` extension (without it the old directory is left,
+  unused). Early bans and violation counts in it do not carry over (they last `ban_duration`, one hour
+  by default). Shared by the filter and the middleware in the new `_waf_datadir.php`, which can be
+  loaded from two copies of the module without a redeclare fatal. Covered by `EarlyFilterDataDirTest`.
+
+### Added
+
+- **`WAF_DATA_DIR`** (environment variable, absolute path) moves the early filter's data directory, for
+  example into the project: the WAF keeps its files in its own `waf-<uid>-<hash>` directory inside it and
+  never changes the mode of `WAF_DATA_DIR` or deletes anything else in it, so it can be an existing
+  directory. It must be set in the real environment (web server or PHP-FPM config): the
+  early filter runs before `.env` is loaded, so a value only in `.env` is ignored, with a logged warning.
+  See docs/early-filter.md, "Where the early filter keeps its files".
+
 ## 1.7.0 (2026-09-28)
 
 ### Fixed
