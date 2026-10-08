@@ -288,6 +288,109 @@ class EarlyFilterDataDirTest extends SapphireTest
         $this->assertDirectoryDoesNotExist($oldDir);
     }
 
+    /**
+     * WAF_DATA_DIR may name a dir that holds other things (the project root, a shared data dir): the WAF
+     * keeps its files in a waf-<uid>-<hash> dir of its own inside it, and never changes the mode of the
+     * dir it was given. 1.8.0-dev used WAF_DATA_DIR itself and chmodded it to 0700.
+     */
+    public function testWafDataDirThatHoldsOtherFilesIsLeftAlone(): void
+    {
+        $project = $this->tmpDir . '/project';
+        mkdir($project, 0755);
+        chmod($project, 0755);
+        file_put_contents($project . '/composer.json', '{}');
+        $env = ['WAF_DATA_DIR' => $project];
+
+        for ($i = 0; $i < 10; $i++) {
+            $this->runFilter(self::CLIENT, [], $env, '/wp-login.php');
+        }
+        $this->assertSame('FORBIDDEN', $this->runFilter(self::CLIENT, [], $env), 'control: the client is early-banned');
+
+        clearstatcache();
+        $this->assertSame(
+            ['mode' => '0755', 'entries' => ['composer.json', $this->dataDirName()]],
+            [
+                'mode' => sprintf('%04o', fileperms($project) & 0777),
+                'entries' => array_values(array_diff(scandir($project), ['.', '..'])),
+            ],
+            'WAF_DATA_DIR keeps its mode and its contents; the WAF only added its own dir'
+        );
+    }
+
+    /**
+     * The occasional cleanup removes expired ban and violation files and stale temp files of the filter,
+     * nothing else: before, it deleted every file older than ban_duration that did not start with a dot,
+     * which with WAF_DATA_DIR pointing at an existing dir meant the project's own files.
+     */
+    public function testCleanupOnlyRemovesTheFilesOfTheFilter(): void
+    {
+        $dir = $this->tmpDir . '/cleanup';
+        mkdir($dir, 0700);
+        $old = time() - 7200;
+        $files = [
+            'composer.json' => $old,
+            'README' => $old,
+            '.env' => $old,
+            'config.json' => $old,
+            'ban_' . md5(self::OTHER) . '.bak' => $old,
+            'ban_' . md5(self::CLIENT) => $old,
+            'viol_' . md5(self::CLIENT) => $old,
+            '.tmp-0123456789ab' => $old,
+            'ban_' . md5(self::OTHER) => time(),
+        ];
+        foreach ($files as $name => $mtime) {
+            file_put_contents($dir . '/' . $name, '1');
+            touch($dir . '/' . $name, $mtime);
+        }
+
+        $this->runCode('wafCleanupExpired(' . var_export($dir, true) . ', 3600);');
+
+        $left = array_values(array_diff(scandir($dir), ['.', '..']));
+        sort($left);
+        $expected = ['.env', 'README', 'ban_' . md5(self::OTHER), 'ban_' . md5(self::OTHER) . '.bak', 'composer.json', 'config.json'];
+        sort($expected);
+        $this->assertSame($expected, $left, 'only the expired ban/viol files and the stale temp file are gone');
+    }
+
+    /**
+     * The name of the filter's data dir (waf-<uid>-<hash>), as the filter's process computes it.
+     */
+    private function dataDirName(): string
+    {
+        require_once $this->moduleRoot() . '/_waf_datadir.php';
+        if (function_exists('wafEarlyDataDirName')) {
+            return wafEarlyDataDirName($this->moduleRoot());
+        }
+        # 1.8.0-dev had no separate name helper; same formula
+        return 'waf-' . posix_geteuid() . '-' . substr(md5($this->moduleRoot()), 0, 8);
+    }
+
+    /**
+     * Load the filter on a clean request in its own process, then run $code there (the filter's functions
+     * are only defined in that process). Returns what it printed.
+     */
+    private function runCode(string $code, array $env = []): string
+    {
+        $script = $this->tmpDir . '/code-' . mt_rand() . '.php';
+        file_put_contents($script, '<?php' . "\n"
+            . '$_SERVER = array_merge($_SERVER, ["REMOTE_ADDR" => "127.0.0.1", "REQUEST_URI" => "/", "HTTP_USER_AGENT" => "Mozilla/5.0"]);' . "\n"
+            . 'require ' . var_export($this->moduleRoot() . '/_waf_early_filter.php', true) . ';' . "\n"
+            . $code . "\n");
+        $process = proc_open(
+            [PHP_BINARY, '-n', $script],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            ['TMPDIR' => $this->tmpDir] + $env
+        );
+        $out = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        @unlink($script);
+        return $out;
+    }
+
     private function invokeWriteEarlyFilterConfig(string $trustedProxies): void
     {
         $proxyMiddleware = Injector::inst()->get(TrustedProxyMiddleware::class);

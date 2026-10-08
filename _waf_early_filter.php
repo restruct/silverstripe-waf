@@ -377,6 +377,9 @@ function wafTrackViolation(string $ip): void
 
 /**
  * Clean up expired ban and violation files
+ *
+ * Only the filter's own names (ban_<md5>, viol_<md5>, and .tmp-<hex> files of an interrupted write) are
+ * ever deleted (waf#9 review): everything else, config.json included, is left alone, whatever its age.
  */
 function wafCleanupExpired(string $dir, int $maxAge): void
 {
@@ -387,12 +390,17 @@ function wafCleanupExpired(string $dir, int $maxAge): void
     }
 
     foreach ($files as $file) {
-        // Skip dot files and the config file (written by middleware)
-        if ($file[0] === '.' || $file === 'config.json') {
-            # ...except a temp file wafWriteDataFile() left behind when a write was interrupted
-            if (!str_starts_with($file, '.tmp-')) {
-                continue;
-            }
+        //// Skip dot files and the config file (written by middleware)
+        //if ($file[0] === '.' || $file === 'config.json') {
+        //    # ...except a temp file wafWriteDataFile() left behind when a write was interrupted
+        //    if (!str_starts_with($file, '.tmp-')) {
+        //        continue;
+        //    }
+        //}
+        # An allowlist, not a skip list: a skip list deleted any other file older than ban_duration,
+        # which in a dir that also held other things (WAF_DATA_DIR pointing at the project) was theirs
+        if (!wafIsDataFileName($file) && !wafIsDataTempFileName($file)) {
+            continue;
         }
         $path = $dir . '/' . $file;
         if (@filemtime($path) < $cutoff) {
