@@ -121,8 +121,10 @@ while all of this holds, checked on one `lstat()` so the answer cannot change ha
 
 - it is a real directory (not a symlink) owned by the process user that nobody else can write to; one of
   ours that others can only read is tightened to `0700`;
-- its parent is not writable by others, or is sticky like `/tmp` (otherwise someone could swap the
-  directory for another right after the check).
+- its parent belongs to root or the process user, and is not writable by group or others unless it is
+  sticky like `/tmp` (otherwise someone could swap the directory for another right after the check).
+  So a `WAF_DATA_DIR` that is a `0775` directory shared with a deploy group is refused: use a dedicated
+  parent of the web server user with mode `0755` or `0700`.
 
 Anything else is refused. A refused directory means no early bans and the built-in defaults for the
 early filter (pattern blocking still works), and the middleware logs

@@ -11,8 +11,9 @@
   bans, or set `trusted_proxy_ips` to `*` and choose through `X-Forwarded-For` which address is banned.
   The directory is now `waf-<uid>-<hash>` (per process user), `0700` with `0600` files written
   atomically, inside the system temp dir or `WAF_DATA_DIR`. It is only used while it is a real directory
-  (not a symlink) owned by the PHP user that nobody else can write to, in a parent that others cannot
-  write to unless it is sticky like `/tmp`, all decided on one `lstat()`; otherwise the early ban is off
+  (not a symlink) owned by the PHP user that nobody else can write to, in a parent owned by root or the
+  PHP user that group and others cannot write to unless it is sticky like `/tmp` (so a `0775`
+  deploy-group `WAF_DATA_DIR` is refused), all decided on one `lstat()`; otherwise the early ban is off
   and the middleware logs why, at most hourly. Inside it only regular files of the PHP user are read, so
   a symlink or a file someone left there while it was open counts as absent, and a `config.json` that is
   not ours or is dated in the future is rewritten. The cleanup only deletes the WAF's own file names.
