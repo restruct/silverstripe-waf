@@ -64,7 +64,8 @@ WAF_EARLY_FILTER_DISABLED=true
 # Disable early filter banning (self-contained fail2ban alternative)
 WAF_EARLY_BAN=false
 
-# Early filter data dir (absolute path; real environment only, not .env - see early-filter.md)
+# Early filter data dir: the WAF keeps its files in a waf-<uid>-<hash> dir inside it
+# (absolute path; real environment only, not .env - see early-filter.md)
 WAF_DATA_DIR=/home/site/waf-data
 
 # Whitelist IPs (comma-separated, supports CIDR)

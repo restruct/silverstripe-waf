@@ -23,6 +23,8 @@
  * process user, mode 0700. A dir of ours that others can only read is tightened to 0700; one that
  * others can write to is refused, because its contents may be anyone's. Refused means the early ban is
  * off and the filter uses its defaults (pattern blocking is unaffected); the middleware logs why.
+ * The checks run on one lstat() and only in a parent others cannot write to unless it is sticky, so
+ * the dir checked is the dir used. Inside it only regular files of this user are believed.
  * Files are written 0600 through a temp file and rename(), so a reader never sees half a file.
  *
  * Someone who pre-creates the default path (it is predictable) can make it refused, i.e. switch the
