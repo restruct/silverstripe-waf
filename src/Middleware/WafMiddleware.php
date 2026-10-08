@@ -728,9 +728,13 @@ class WafMiddleware implements HTTPMiddleware
                 //'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
                 //. 'or writable by others): early bans are off. Set WAF_DATA_DIR to a dir only the web '
                 //. 'server user can use',
+                //'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
+                //. 'writable by others, or in a parent dir others can write to that is not sticky): early '
+                //. 'bans are off. Set WAF_DATA_DIR to a dir only the web server user can use',
                 'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
-                . 'writable by others, or in a parent dir others can write to that is not sticky): early '
-                . 'bans are off. Set WAF_DATA_DIR to a dir only the web server user can use',
+                . 'writable by others, or in a parent dir that is not ours or root\'s, or that others can '
+                . 'write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                . 'server user can use',
                 wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
             ));
             return;

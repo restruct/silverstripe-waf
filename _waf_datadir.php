@@ -201,14 +201,27 @@ if (!function_exists('wafIsSafeParent')) {
      * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
      * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
      * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
+     *
+     * Either way the parent must belong to root or to this process user: the owner of a dir can always
+     * rename or remove what is in it, sticky or not, so a 1777 dir someone else made first (at the
+     * WAF_DATA_DIR path, or as TMPDIR) would let them swap our dir after the check (waf#9 review).
+     * Without posix the owner is not known and only the mode is checked.
      */
     function wafIsSafeParent(string $parent): bool
     {
         clearstatcache(true, $parent);
-        $perms = @fileperms($parent);
-        if ($perms === false) {
+        //$perms = @fileperms($parent);
+        //if ($perms === false) {
+        //    return false;
+        //}
+        $stat = @stat($parent);
+        if ($stat === false) {
             return false;
         }
+        if (function_exists('posix_geteuid') && $stat['uid'] !== 0 && $stat['uid'] !== posix_geteuid()) {
+            return false;
+        }
+        $perms = $stat['mode'];
         return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
     }
 }

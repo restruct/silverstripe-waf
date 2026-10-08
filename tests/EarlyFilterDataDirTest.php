@@ -552,6 +552,53 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * A sticky parent only protects our entry in it when the parent itself belongs to us or root: the
+     * owner of a sticky dir may still rename or delete anything in it. So a 1777 dir someone else made
+     * first (at the WAF_DATA_DIR path, or as TMPDIR) is refused; /tmp (root's) is fine.
+     */
+    public function testStickyParentOfAnotherUserIsRefused(): void
+    {
+        $parent = $this->tmpDir . '/sticky';
+        mkdir($parent, 01777);
+        chmod($parent, 01777);
+        $dataDir = $parent . '/' . $this->dataDirName();
+        mkdir($dataDir, 0700);
+        file_put_contents($dataDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+        $env = ['WAF_DATA_DIR' => $parent];
+
+        # Control: root's sticky /tmp as the parent is accepted when the process is someone else
+        $rootParent = '/tmp';
+        $rootDataDir = $rootParent . '/' . $this->dataDirName();
+        $rootParentUsable = (@fileowner($rootParent) === 0) && !file_exists($rootDataDir);
+        if ($rootParentUsable) {
+            mkdir($rootDataDir, 0700);
+            file_put_contents($rootDataDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+        }
+        try {
+            $actual = [
+                'sticky parent of someone else' => $this->runFilterAsOtherUser(['wafIsSafeParent'], self::CLIENT, '/', $env),
+                'control: the same parent as ours' => $this->runFilterAsOtherUser([], self::CLIENT, '/', $env),
+                'control: root\'s /tmp' => $rootParentUsable
+                    ? $this->runFilterAsOtherUser(['wafIsSafeParent'], self::CLIENT, '/', ['WAF_DATA_DIR' => $rootParent])
+                    : 'n/a: /tmp is not root\'s here',
+            ];
+        } finally {
+            if ($rootParentUsable) {
+                $this->removeDir($rootDataDir);
+            }
+        }
+
+        $this->assertSame(
+            [
+                'sticky parent of someone else' => 'PASSED',
+                'control: the same parent as ours' => 'FORBIDDEN',
+                'control: root\'s /tmp' => $rootParentUsable ? 'FORBIDDEN' : 'n/a: /tmp is not root\'s here',
+            ],
+            $actual
+        );
+    }
+
+    /**
      * The middleware leaves the 1.7.0 dir alone when it belongs to another user.
      */
     public function testMiddlewareLeavesTheOldDirOfAnotherUser(): void
