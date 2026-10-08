@@ -506,6 +506,84 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * A data dir of another user is refused, even when it is readable and we could chmod it: here our
+     * own 0755 dir, seen by a process whose euid is someone else's (see runAsOtherUser()). It is not
+     * tightened and nothing is written in it; the probe itself is still blocked.
+     */
+    public function testDataDirOfAnotherUserIsRefused(): void
+    {
+        $dataDir = $this->tmpDir . '/' . $this->dataDirName();
+        mkdir($dataDir, 0755);
+        chmod($dataDir, 0755);
+
+        $result = $this->runFilterAsOtherUser(['wafIsPrivateDir'], self::CLIENT, '/wp-login.php');
+
+        clearstatcache();
+        $this->assertSame(
+            ['probe' => 'FORBIDDEN', 'mode' => '0755', 'entries' => []],
+            [
+                'probe' => $result,
+                'mode' => sprintf('%04o', fileperms($dataDir) & 0777),
+                'entries' => array_values(array_diff(scandir($dataDir), ['.', '..'])),
+            ],
+            'the dir is not tightened and no counter is written in it'
+        );
+    }
+
+    /**
+     * A data file of another user in our private dir counts as absent: a regular 0600 ban file, owned by
+     * someone else as far as the filter's process can tell, does not ban.
+     */
+    public function testDataFileOfAnotherUserIsNotRead(): void
+    {
+        $dataDir = $this->tmpDir . '/' . $this->dataDirName();
+        mkdir($dataDir, 0700);
+        chmod($dataDir, 0700);
+        file_put_contents($dataDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+        chmod($dataDir . '/ban_' . md5(self::CLIENT), 0600);
+
+        $this->assertSame(
+            ['someone else\'s ban file' => 'PASSED', 'control: the same file as ours' => 'FORBIDDEN'],
+            [
+                'someone else\'s ban file' => $this->runFilterAsOtherUser(['wafDataFileStat'], self::CLIENT),
+                'control: the same file as ours' => $this->runFilterAsOtherUser([], self::CLIENT),
+            ]
+        );
+    }
+
+    /**
+     * The middleware leaves the 1.7.0 dir alone when it belongs to another user.
+     */
+    public function testMiddlewareLeavesTheOldDirOfAnotherUser(): void
+    {
+        $oldDir = $this->tmpDir . '/waf_' . substr(md5($this->moduleRoot()), 0, 8);
+        mkdir($oldDir, 0755);
+        file_put_contents($oldDir . '/config.json', '{}');
+
+        $code = 'require ' . var_export($this->moduleRoot() . '/_waf_datadir.php', true) . ';' . "\n"
+            . '$m = (new \ReflectionClass(' . var_export(WafMiddleware::class, true) . '))->newInstanceWithoutConstructor();' . "\n"
+            . '$r = new \ReflectionMethod($m, "removeLegacyEarlyFilterDir");' . "\n"
+            . '$r->setAccessible(true);' . "\n"
+            . '$r->invoke($m, ' . var_export($this->moduleRoot(), true) . ');' . "\n"
+            . 'echo "DONE";';
+        $autoload = dirname((new \ReflectionClass(\Composer\Autoload\ClassLoader::class))->getFileName(), 2) . '/autoload.php';
+        $prelude = 'require ' . var_export($autoload, true) . ';';
+
+        $other = $this->runAsOtherUser(['removeLegacyEarlyFilterDir'], $prelude . "\n" . $code);
+        clearstatcache();
+        $keptForOther = file_exists($oldDir . '/config.json');
+
+        $ours = $this->runAsOtherUser([], $prelude . "\n" . $code);
+        clearstatcache();
+        $removedForUs = !is_dir($oldDir);
+
+        $this->assertSame(
+            ['someone else\'s dir' => ['DONE', true], 'control: our dir' => ['DONE', true]],
+            ['someone else\'s dir' => [trim($other), $keptForOther], 'control: our dir' => [trim($ours), $removedForUs]]
+        );
+    }
+
+    /**
      * _waf_datadir.php can be loaded from two places in one request (the early filter requires its own
      * copy, the middleware the one next to its class; two installs of the module, or a copy under _dev,
      * make those different files). That must not be a "Cannot redeclare" fatal.
@@ -519,6 +597,59 @@ class EarlyFilterDataDirTest extends SapphireTest
         $out = $this->runCode('require ' . var_export($copy, true) . '; echo "LOADED";');
 
         $this->assertSame('LOADED', trim($out));
+    }
+
+    /**
+     * Run $code in its own PHP process in which posix_geteuid() reports another user (12345) to the
+     * functions named in $callers, and our own uid to everything else (the dir name, other checks).
+     * There is only one real user here, so this is how the owner checks get a file or dir that is
+     * "someone else's": everything this test makes is ours, and the process is told it is not.
+     * posix_geteuid() is disabled in that process so the replacement can be declared.
+     */
+    private function runAsOtherUser(array $callers, string $code, array $env = []): string
+    {
+        $script = $this->tmpDir . '/other-' . mt_rand() . '.php';
+        file_put_contents($script, '<?php' . "\n"
+            . 'function posix_geteuid() {' . "\n"
+            . '    $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2)[1]["function"] ?? "";' . "\n"
+            . '    return in_array($caller, ' . var_export($callers, true) . ', true) ? 12345 : ' . posix_geteuid() . ';' . "\n"
+            . '}' . "\n"
+            . $code . "\n");
+        $process = proc_open(
+            [PHP_BINARY, '-d', 'disable_functions=posix_geteuid', $script],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            null,
+            ['TMPDIR' => $this->tmpDir] + $env
+        );
+        # stdout only: the filter's error_log() lines go to stderr
+        $out = stream_get_contents($pipes[1]);
+        stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        @unlink($script);
+        return $out;
+    }
+
+    /**
+     * runFilter() in a process where posix_geteuid() reports another user to $callers.
+     */
+    private function runFilterAsOtherUser(array $callers, string $remoteAddr, string $path = '/', array $env = []): string
+    {
+        $server = ['REMOTE_ADDR' => $remoteAddr, 'REQUEST_URI' => $path, 'HTTP_USER_AGENT' => 'Mozilla/5.0'];
+        $out = $this->runAsOtherUser(
+            $callers,
+            '$_SERVER = array_merge($_SERVER, ' . var_export($server, true) . ');' . "\n"
+            . 'require ' . var_export($this->moduleRoot() . '/_waf_early_filter.php', true) . ';' . "\n"
+            . 'echo "PASSED";',
+            $env
+        );
+        return match (trim($out)) {
+            'Forbidden' => 'FORBIDDEN',
+            'PASSED' => 'PASSED',
+            default => 'UNEXPECTED: ' . $out,
+        };
     }
 
     /**
