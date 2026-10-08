@@ -64,7 +64,10 @@ class EarlyFilterProxyTest extends SapphireTest
         # Since waf#9 the dir is waf-<uid>-<hash> and only used while private (0700): same name as this
         # process computes it, under the filter's TMPDIR
         require_once dirname(__DIR__) . '/_waf_datadir.php';
-        $dir = $this->tmpDir . '/' . basename(wafEarlyDataDirPath(dirname(__DIR__)));
+        //$dir = $this->tmpDir . '/' . basename(wafEarlyDataDirPath(dirname(__DIR__)));
+        # The name only: the path would follow a WAF_DATA_DIR in the runner's environment, which the
+        # filter's process (explicit environment) does not have
+        $dir = $this->tmpDir . '/' . wafEarlyDataDirName(dirname(__DIR__));
         if (!is_dir($dir)) {
             //mkdir($dir, 0755, true);
             mkdir($dir, 0700, true);
@@ -267,6 +270,10 @@ class EarlyFilterProxyTest extends SapphireTest
         //$configFile = sys_get_temp_dir() . '/waf_' . substr(md5(dirname(__DIR__)), 0, 8) . '/config.json';
         # Where the middleware writes since waf#9 (the default dir, WAF_DATA_DIR unset in this process)
         require_once dirname(__DIR__) . '/_waf_datadir.php';
+        # Make "unset in this process" true: a WAF_DATA_DIR in the runner's environment would move (or,
+        # when relative, switch off) the dir the middleware writes to
+        $originalDataDirEnv = getenv('WAF_DATA_DIR');
+        putenv('WAF_DATA_DIR');
         $configFile = wafEarlyDataDirPath(dirname(__DIR__)) . '/config.json';
         @unlink($configFile);   # it is only rewritten once an hour otherwise
         try {
@@ -277,6 +284,7 @@ class EarlyFilterProxyTest extends SapphireTest
         } finally {
             $middleware->setTrustedProxyIPs($original);
             @unlink($configFile);
+            $originalDataDirEnv === false ? putenv('WAF_DATA_DIR') : putenv('WAF_DATA_DIR=' . $originalDataDirEnv);
         }
 
         $this->assertSame('10.0.0.0/8', $written['trusted_proxy_ips'] ?? null);

@@ -187,7 +187,9 @@ class EarlyFilterDataDirTest extends SapphireTest
         $attackerDir = $this->tmpDir . '/attacker';
         $this->plantAttackerFiles($attackerDir, self::CLIENT);
         # The default path as the filter's process sees it (TMPDIR is this test's dir)
-        $dataDir = $this->tmpDir . '/' . basename(wafEarlyDataDirPath($this->moduleRoot()));
+        //$dataDir = $this->tmpDir . '/' . basename(wafEarlyDataDirPath($this->moduleRoot()));
+        # The name only: the path would follow a WAF_DATA_DIR in the runner's environment
+        $dataDir = $this->tmpDir . '/' . $this->dataDirName();
         symlink($attackerDir, $dataDir);
         $before = $this->permsUnder($attackerDir);
 
