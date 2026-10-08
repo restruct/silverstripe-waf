@@ -198,6 +198,32 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * The symlink is refused for being a symlink, not only because of what it points to: here it points
+     * at a 0700 dir of our own user, which passes every other check. The test above points at a 0777
+     * dir, which the mode check refuses anyway, so it would stay green without the symlink check.
+     */
+    public function testSymlinkToAPrivateDirOfOursIsRefused(): void
+    {
+        $ourDir = $this->tmpDir . '/ours';
+        mkdir($ourDir, 0700);
+        chmod($ourDir, 0700);
+        file_put_contents($ourDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+        chmod($ourDir . '/ban_' . md5(self::CLIENT), 0600);
+        $dataDir = $this->tmpDir . '/' . $this->dataDirName();
+        symlink($ourDir, $dataDir);
+        $before = $this->permsUnder($ourDir);
+
+        $this->assertSame('PASSED', $this->runFilter(self::CLIENT, []), 'the ban behind the symlink is not read');
+        $this->assertSame('FORBIDDEN', $this->runFilter(self::OTHER, [], [], '/wp-login.php'), 'control: probes still blocked');
+        $this->assertSame($before, $this->permsUnder($ourDir), 'nothing was written through the symlink');
+
+        # Control: the same dir at the real path is used
+        unlink($dataDir);
+        rename($ourDir, $dataDir);
+        $this->assertSame('FORBIDDEN', $this->runFilter(self::CLIENT, []), 'control: the dir itself is trusted');
+    }
+
+    /**
      * A data dir that others can write to is refused, whoever made it: its contents may be anyone's.
      * One that is ours and only readable by others is tightened to 0700 and used.
      */
