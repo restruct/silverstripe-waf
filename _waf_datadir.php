@@ -230,8 +230,13 @@ function wafReadDataFile(string $dir, string $name): ?string
 }
 
 /**
- * Write $content to $dir/$name, mode 0600, atomically: into a new temp file in the same dir (created
- * exclusively, so it never follows a planted name), then rename() over the target.
+ * Write $content to $dir/$name, mode 0600, atomically: into a new temp file in the same dir, then
+ * rename() over the target (rename() replaces a symlink at the target, it does not write through it).
+ *
+ * The temp file is opened with 'x' (create, fail if it exists), but that is not what keeps it safe:
+ * PHP resolves the path before it opens, so 'x' does follow a dangling symlink (checked on PHP 8.3).
+ * What does is that $dir is private (0700, ours: wafIsPrivateDir()), so nobody else can plant
+ * anything in it, and the name is random, so nothing could be planted under it in advance.
  */
 function wafWriteDataFile(string $dir, string $name, string $content): bool
 {
