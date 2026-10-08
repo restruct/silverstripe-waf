@@ -60,9 +60,14 @@ class EarlyFilterProxyTest extends SapphireTest
      */
     private function dataDir(): string
     {
-        $dir = $this->tmpDir . '/waf_' . substr(md5(dirname(__DIR__)), 0, 8);
+        //$dir = $this->tmpDir . '/waf_' . substr(md5(dirname(__DIR__)), 0, 8);
+        # Since waf#9 the dir is waf-<uid>-<hash> and only used while private (0700): same name as this
+        # process computes it, under the filter's TMPDIR
+        require_once dirname(__DIR__) . '/_waf_datadir.php';
+        $dir = $this->tmpDir . '/' . basename(wafEarlyDataDirPath(dirname(__DIR__)));
         if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
+            //mkdir($dir, 0755, true);
+            mkdir($dir, 0700, true);
         }
         return $dir;
     }
@@ -259,7 +264,10 @@ class EarlyFilterProxyTest extends SapphireTest
         $original = $middleware->getTrustedProxyIPs();
         $middleware->setTrustedProxyIPs('10.0.0.0/8');
 
-        $configFile = sys_get_temp_dir() . '/waf_' . substr(md5(dirname(__DIR__)), 0, 8) . '/config.json';
+        //$configFile = sys_get_temp_dir() . '/waf_' . substr(md5(dirname(__DIR__)), 0, 8) . '/config.json';
+        # Where the middleware writes since waf#9 (the default dir, WAF_DATA_DIR unset in this process)
+        require_once dirname(__DIR__) . '/_waf_datadir.php';
+        $configFile = wafEarlyDataDirPath(dirname(__DIR__)) . '/config.json';
         @unlink($configFile);   # it is only rewritten once an hour otherwise
         try {
             $method = new \ReflectionMethod(WafMiddleware::class, 'writeEarlyFilterConfig');
