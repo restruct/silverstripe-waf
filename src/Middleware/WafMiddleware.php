@@ -708,6 +708,9 @@ class WafMiddleware implements HTTPMiddleware
      * early_ban_enabled to a file that both layers can access.
      *
      * Writes at most once per hour to minimize overhead.
+     *
+     * The dir is resolved by _waf_datadir.php, which the early filter uses too (waf#9): private to the
+     * process user (0700, not a symlink), WAF_DATA_DIR or a per-user dir in the system temp dir.
      */
     protected function writeEarlyFilterConfig(): void
     {
@@ -715,7 +718,20 @@ class WafMiddleware implements HTTPMiddleware
         # Early filter: __DIR__ = module root
         # Middleware: __DIR__ = src/Middleware, so dirname(__DIR__, 2) = module root
         $moduleRoot = dirname(__DIR__, 2);
-        $wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5($moduleRoot), 0, 8);
+        //$wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5($moduleRoot), 0, 8);
+        require_once $moduleRoot . '/_waf_datadir.php';
+        # Creates the dir (0700) on first use; null when no private dir can be had, in which case the
+        # filter reads nothing from it either and runs on its defaults with the early ban off
+        $wafDataDir = wafEarlyDataDir($moduleRoot, true);
+        if ($wafDataDir === null) {
+            $this->warnEarlyFilterDataDir(sprintf(
+                'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
+                . 'or writable by others): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                . 'server user can use',
+                wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
+            ));
+            return;
+        }
         $configFile = $wafDataDir . '/config.json';
 
         # Only write if file doesn't exist or is older than 1 hour
@@ -723,9 +739,21 @@ class WafMiddleware implements HTTPMiddleware
             return;
         }
 
-        if (!is_dir($wafDataDir)) {
-            @mkdir($wafDataDir, 0755, true);
+        //if (!is_dir($wafDataDir)) {
+        //    @mkdir($wafDataDir, 0755, true);
+        //}
+
+        # .env is loaded into Silverstripe's own Environment store, never into the process environment,
+        # so a WAF_DATA_DIR set only there is invisible to the early filter. Both layers therefore
+        # ignore it (they must agree on the dir); say so instead of silently using the default.
+        if (getenv('WAF_DATA_DIR') === false && (string) Environment::getEnv('WAF_DATA_DIR') !== '') {
+            $this->warnEarlyFilterDataDir(
+                'WAF_DATA_DIR is set in .env, which the early filter cannot read (it runs before .env is '
+                . 'loaded), so it is ignored. Set it in the web server or PHP-FPM environment instead'
+            );
         }
+
+        $this->removeLegacyEarlyFilterDir($moduleRoot);
 
         $config = [
             'early_ban_enabled' => $this->config()->get('early_ban_enabled'),
@@ -737,6 +765,54 @@ class WafMiddleware implements HTTPMiddleware
             'trusted_proxy_ips' => (string) Injector::inst()->get(TrustedProxyMiddleware::class)->getTrustedProxyIPs(),
         ];
 
-        @file_put_contents($configFile, json_encode($config));
+        //@file_put_contents($configFile, json_encode($config));
+        # 0600, and atomic so the filter never reads half a config.json
+        wafWriteDataFile($wafDataDir, 'config.json', (string) json_encode($config));
+    }
+
+    /**
+     * Log a warning about the early filter's data dir, at most once an hour (it is checked on every
+     * request, and a refused dir stays refused until someone fixes it).
+     */
+    protected function warnEarlyFilterDataDir(string $message): void
+    {
+        $key = 'early_filter_dir_warned_' . md5($message);
+        try {
+            $cache = $this->getCache();
+            if ($cache->get($key)) {
+                return;
+            }
+            $cache->set($key, true, 3600);
+        } catch (\Throwable $e) {
+            # No cache: warn anyway, a log line per request beats a silent switch-off
+        }
+        Injector::inst()->get(LoggerInterface::class)->warning('[WAF] ' . $message);
+    }
+
+    /**
+     * Remove the data dir 1.7.0 and earlier used, sys_get_temp_dir()/waf_<hash> (0755, 0644 files), once
+     * the new one is in use. It is no longer read, and its config.json showed the trusted proxy list to
+     * anyone on the host. Only a real dir owned by this process user is touched; unlink() on a symlink
+     * inside it removes the link, not its target.
+     */
+    protected function removeLegacyEarlyFilterDir(string $moduleRoot): void
+    {
+        $legacyDir = sys_get_temp_dir() . '/waf_' . substr(md5($moduleRoot), 0, 8);
+        if (is_link($legacyDir) || !is_dir($legacyDir)) {
+            return;
+        }
+        if (!function_exists('posix_geteuid') || @fileowner($legacyDir) !== posix_geteuid()) {
+            return;
+        }
+        foreach (@scandir($legacyDir) ?: [] as $file) {
+            if ($file === '.' || $file === '..') {
+                continue;
+            }
+            $path = $legacyDir . '/' . $file;
+            if (is_link($path) || is_file($path)) {
+                @unlink($path);
+            }
+        }
+        @rmdir($legacyDir);
     }
 }

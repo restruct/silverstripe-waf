@@ -100,7 +100,35 @@ The early filter runs before the Silverstripe framework, so it can't read YAML c
 2. The early filter reads this JSON file to get the current config values
 3. If the config file doesn't exist yet (first request), the early filter uses sensible defaults (threshold: 10, duration: 3600)
 
-Both components derive the shared data directory path from the module's installation path, so they always agree on where to find the files.
+Both components work out the data directory the same way (from the module's installation path and the
+real process environment), so they always agree on where to find the files.
+
+### Where the early filter keeps its files
+
+The ban files, violation counters and `config.json` live in a directory that only the PHP process user
+can use:
+
+- `WAF_DATA_DIR`, when set: an absolute path, for example a directory inside the project. It must be a
+  **real environment variable** (web server or PHP-FPM pool config, e.g. `env[WAF_DATA_DIR] = ...`), not
+  a line in `.env`: the early filter runs before Silverstripe loads `.env`. A value only in `.env` is
+  ignored by both layers, and the middleware logs a warning saying so.
+- Otherwise `<system temp dir>/waf-<uid>-<hash>`, one per process user and module install.
+
+The directory is created with mode `0700` and its files with `0600`, written atomically. It is only used
+while it is a real directory (not a symlink) owned by the process user that nobody else can write to:
+one of ours that others can only read is tightened to `0700`; anything else is refused. A refused
+directory means no early bans and the built-in defaults for the early filter (pattern blocking still
+works), and the middleware logs `[WAF] no private data dir for the early filter ...` at most once an hour.
+
+Up to 1.7.0 the files were in `<system temp dir>/waf_<hash>`, readable by everyone and trusted as found,
+so on a host with a shared temp directory other users could read them or plant their own (waf#9). That
+directory is no longer read; the middleware removes it when it belongs to the process user. Early bans
+and violation counts in it do not carry over, so on upgrade they start from zero (bans last
+`ban_duration`, one hour by default).
+
+On a shared host, setting `WAF_DATA_DIR` to a directory inside your own account is the stronger choice:
+the default name is predictable, so another user can pre-create it. They cannot read or change what
+the WAF keeps there, but the refused directory switches the early ban off until you set `WAF_DATA_DIR`.
 
 ## Pattern Philosophy
 

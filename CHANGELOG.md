@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.8.0 (unreleased)
+
+### Fixed
+
+- **Security: the early filter keeps its files private to the PHP user** (waf#9). Its ban files,
+  violation counters and `config.json` were in `<system temp dir>/waf_<hash>`, a `0755` directory with
+  `0644` files at a predictable name, trusted as found. On a host where users or sites share the temp
+  dir, anyone could read them (including the trusted proxy list) or plant their own: lift or place early
+  bans, or set `trusted_proxy_ips` to `*` and choose through `X-Forwarded-For` which address is banned.
+  The directory is now `0700` with `0600` files written atomically, and is only used while it is a real
+  directory (not a symlink) owned by the PHP user that nobody else can write to; otherwise the early ban
+  is off and the middleware logs why, at most hourly. The default is `<system temp dir>/waf-<uid>-<hash>`,
+  per process user. The old directory is no longer read and is removed by the middleware when it is
+  ours; early bans and violation counts in it do not carry over (they last `ban_duration`, one hour by
+  default). Shared by the filter and the middleware in the new `_waf_datadir.php`. Covered by
+  `EarlyFilterDataDirTest`.
+
+### Added
+
+- **`WAF_DATA_DIR`** (environment variable, absolute path) moves the early filter's data directory, for
+  example into the project. It must be set in the real environment (web server or PHP-FPM config): the
+  early filter runs before `.env` is loaded, so a value only in `.env` is ignored, with a logged warning.
+  See docs/early-filter.md, "Where the early filter keeps its files".
+
 ## 1.7.0 (2026-09-28)
 
 ### Fixed

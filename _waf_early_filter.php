@@ -47,12 +47,17 @@ $config = [
 // Toggle via env: WAF_EARLY_BAN=false to disable, WAF_EARLY_BAN=true to enable.
 
 // Data directory — unique per project, derived from module path
-$wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5(__DIR__), 0, 8);
+//$wafDataDir = sys_get_temp_dir() . '/waf_' . substr(md5(__DIR__), 0, 8);
+// Since waf#9 only a dir private to this process user (0700, ours, not a symlink): the old 0755 dir in
+// the shared temp dir let anyone on the host read these files or plant their own. WAF_DATA_DIR (real
+// env var) moves it. Null when it does not exist yet or is not private: then nothing is read from it.
+require_once __DIR__ . '/_waf_datadir.php';
+$wafDataDir = wafEarlyDataDir(__DIR__, false);
 
 // Read config from shared file (written by middleware from YAML config values)
 $earlyBanConfig = ['enabled' => true, 'threshold' => 10, 'duration' => 3600];
-$wafConfigFile = $wafDataDir . '/config.json';
-if (file_exists($wafConfigFile)) {
+$wafConfigFile = $wafDataDir !== null ? $wafDataDir . '/config.json' : null;
+if ($wafConfigFile !== null && file_exists($wafConfigFile)) {
     $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
     if (is_array($loadedConfig)) {
         $earlyBanConfig['enabled'] = $loadedConfig['early_ban_enabled'] ?? true;
@@ -112,7 +117,8 @@ if (in_array($ip, $whitelistedIps, true)) {
 
 // 0. Early ban check — blocks ALL URLs from repeat offenders
 //    Cost: one file_exists (~0.01ms) when enabled, 0ms when disabled
-if ($earlyBanConfig['enabled'] && is_dir($wafDataDir)) {
+//if ($earlyBanConfig['enabled'] && is_dir($wafDataDir)) {
+if ($earlyBanConfig['enabled'] && $wafDataDir !== null) {
     $banFile = $wafDataDir . '/ban_' . md5($ip);
     if (file_exists($banFile)) {
         $expires = (int) @file_get_contents($banFile);
@@ -311,8 +317,16 @@ function wafTrackViolation(string $ip): void
         return;
     }
 
-    if (!is_dir($wafDataDir)) {
-        @mkdir($wafDataDir, 0755, true);
+    //if (!is_dir($wafDataDir)) {
+    //    @mkdir($wafDataDir, 0755, true);
+    //}
+    # First violation on a fresh install: create the private dir (0700). No private dir to be had
+    # (refused, or not writable): no early ban, the block itself still happened.
+    if ($wafDataDir === null) {
+        $wafDataDir = wafEarlyDataDir(__DIR__, true);
+        if ($wafDataDir === null) {
+            return;
+        }
     }
 
     $violFile = $wafDataDir . '/viol_' . md5($ip);
@@ -339,7 +353,9 @@ function wafTrackViolation(string $ip): void
     // Ban if threshold reached
     if ($count >= $earlyBanConfig['threshold']) {
         $banFile = $wafDataDir . '/ban_' . md5($ip);
-        @file_put_contents($banFile, (string) (time() + $earlyBanConfig['duration']));
+        //@file_put_contents($banFile, (string) (time() + $earlyBanConfig['duration']));
+        # 0600 and atomic (temp file + rename): a concurrent ban check never reads a half-written file
+        wafWriteDataFile($wafDataDir, basename($banFile), (string) (time() + $earlyBanConfig['duration']));
         @unlink($violFile);
 
         error_log(sprintf(
@@ -349,7 +365,8 @@ function wafTrackViolation(string $ip): void
             $earlyBanConfig['duration']
         ));
     } else {
-        @file_put_contents($violFile, $count . ':' . $firstSeen);
+        //@file_put_contents($violFile, $count . ':' . $firstSeen);
+        wafWriteDataFile($wafDataDir, basename($violFile), $count . ':' . $firstSeen);
     }
 
     // Occasional cleanup of expired files (1 in 100 chance)
@@ -372,7 +389,10 @@ function wafCleanupExpired(string $dir, int $maxAge): void
     foreach ($files as $file) {
         // Skip dot files and the config file (written by middleware)
         if ($file[0] === '.' || $file === 'config.json') {
-            continue;
+            # ...except a temp file wafWriteDataFile() left behind when a write was interrupted
+            if (!str_starts_with($file, '.tmp-')) {
+                continue;
+            }
         }
         $path = $dir . '/' . $file;
         if (@filemtime($path) < $cutoff) {
