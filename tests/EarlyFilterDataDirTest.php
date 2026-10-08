@@ -203,8 +203,10 @@ class EarlyFilterDataDirTest extends SapphireTest
      */
     public function testOpenDataDirIsRefusedAndReadableOneIsTightened(): void
     {
-        $custom = $this->tmpDir . '/custom';
-        $env = ['WAF_DATA_DIR' => $custom];
+        //$custom = $this->tmpDir . '/custom';
+        # WAF_DATA_DIR is the parent of the data dir since the #9 review, not the data dir itself
+        $env = ['WAF_DATA_DIR' => $this->tmpDir . '/custom'];
+        $custom = $this->tmpDir . '/custom/' . $this->dataDirName();
 
         $this->plantAttackerFiles($custom, self::CLIENT);
         $this->assertSame('PASSED', $this->runFilter(self::CLIENT, [], $env), 'a world-writable dir is not trusted');
@@ -221,8 +223,12 @@ class EarlyFilterDataDirTest extends SapphireTest
      */
     public function testWafDataDirIsSharedByMiddlewareAndFilter(): void
     {
-        $custom = $this->tmpDir . '/project-private/waf';
-        putenv('WAF_DATA_DIR=' . $custom);
+        //$custom = $this->tmpDir . '/project-private/waf';
+        //putenv('WAF_DATA_DIR=' . $custom);
+        # WAF_DATA_DIR is the parent of the data dir since the #9 review, not the data dir itself
+        $parent = $this->tmpDir . '/project-private/waf';
+        putenv('WAF_DATA_DIR=' . $parent);
+        $custom = $parent . '/' . $this->dataDirName();
         $this->invokeWriteEarlyFilterConfig('10.0.0.0/8');
 
         $this->assertFileExists($custom . '/config.json', 'the middleware wrote to WAF_DATA_DIR');
@@ -238,7 +244,8 @@ class EarlyFilterDataDirTest extends SapphireTest
         file_put_contents($custom . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
         $this->assertSame(
             'FORBIDDEN',
-            $this->runFilter(self::PROXY, ['X-Forwarded-For' => self::CLIENT], ['WAF_DATA_DIR' => $custom]),
+            //$this->runFilter(self::PROXY, ['X-Forwarded-For' => self::CLIENT], ['WAF_DATA_DIR' => $custom]),
+            $this->runFilter(self::PROXY, ['X-Forwarded-For' => self::CLIENT], ['WAF_DATA_DIR' => $parent]),
             'the filter used the trusted proxies from the config the middleware wrote there'
         );
     }
