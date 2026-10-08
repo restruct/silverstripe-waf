@@ -103,7 +103,10 @@ function wafEarlyDataDir(string $moduleDir, bool $create): ?string
     if ($dir === null) {
         return null;
     }
-    if (!is_link($dir) && !is_dir($dir)) {
+    //if (!is_link($dir) && !is_dir($dir)) {
+    # lstat(): nothing at all at the path, not even a (dangling) symlink
+    clearstatcache(true, $dir);
+    if (@lstat($dir) === false) {
         if (!$create) {
             return null;
         }
@@ -119,11 +122,24 @@ function wafEarlyDataDir(string $moduleDir, bool $create): ?string
 /**
  * Whether $dir is a real dir that only this process user can use, tightening our own dir to 0700 when
  * others can at most read it.
+ *
+ * Everything is decided on ONE lstat() of the path (waf#9 review): is_link() followed by is_dir(),
+ * fileowner() and fileperms() is two syscalls, and whoever owns the entry can swap a real dir for a
+ * symlink in between, so the type was checked on one thing and the owner and mode on another. That
+ * single answer only stays true while nobody else can rename the entry, so the parent must not be
+ * writable by others unless it is sticky (like /tmp, where only an entry's owner may rename it).
  */
 function wafIsPrivateDir(string $dir): bool
 {
-    # A symlink at our path points wherever its maker likes; never follow it
-    if (is_link($dir) || !is_dir($dir)) {
+    //# A symlink at our path points wherever its maker likes; never follow it
+    //if (is_link($dir) || !is_dir($dir)) {
+    //    return false;
+    //}
+    clearstatcache(true, $dir);
+    $stat = @lstat($dir);
+    # A symlink at our path points wherever its maker likes; never follow it. lstat() reports the link
+    # itself, so anything but a real dir (S_IFDIR) is refused
+    if ($stat === false || ($stat['mode'] & 0170000) !== 0040000) {
         return false;
     }
     # Windows has no POSIX modes (fileperms() reports 0777, chmod() is a no-op) and its temp dir is
@@ -131,19 +147,26 @@ function wafIsPrivateDir(string $dir): bool
     if (DIRECTORY_SEPARATOR === '\\') {
         return is_writable($dir);
     }
-    if (function_exists('posix_geteuid') && @fileowner($dir) !== posix_geteuid()) {
+    if (!wafIsSafeParent(dirname($dir))) {
         return false;
     }
-    $perms = @fileperms($dir);
-    if ($perms === false) {
+    //if (function_exists('posix_geteuid') && @fileowner($dir) !== posix_geteuid()) {
+    if (function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid()) {
         return false;
     }
+    //$perms = @fileperms($dir);
+    //if ($perms === false) {
+    //    return false;
+    //}
+    $perms = $stat['mode'];
     # Writable by group or others: anything in it may have been put there by someone else
     if (($perms & 0022) !== 0) {
         return false;
     }
     # Readable or searchable by others (e.g. a 0755 dir made with a default umask): ours, so tighten it.
-    # chmod() only succeeds for the owner, which also covers a host without posix.
+    # chmod() only succeeds for the owner, which also covers a host without posix. It follows a
+    # symlink, but the entry is a dir of ours in a parent where nobody else can rename it (checked
+    # above), so it is still the dir lstat() saw.
     if (($perms & 0077) !== 0) {
         if (!@chmod($dir, 0700)) {
             return false;
@@ -153,6 +176,21 @@ function wafIsPrivateDir(string $dir): bool
 
     # Without posix the owner is not known; a 0700 dir we can write to is ours (or we are root)
     return is_writable($dir);
+}
+
+/**
+ * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
+ * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
+ * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
+ */
+function wafIsSafeParent(string $parent): bool
+{
+    clearstatcache(true, $parent);
+    $perms = @fileperms($parent);
+    if ($perms === false) {
+        return false;
+    }
+    return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
 }
 
 /**

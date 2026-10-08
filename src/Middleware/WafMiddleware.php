@@ -725,9 +725,12 @@ class WafMiddleware implements HTTPMiddleware
         $wafDataDir = wafEarlyDataDir($moduleRoot, true);
         if ($wafDataDir === null) {
             $this->warnEarlyFilterDataDir(sprintf(
+                //'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
+                //. 'or writable by others): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                //. 'server user can use',
                 'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
-                . 'or writable by others): early bans are off. Set WAF_DATA_DIR to a dir only the web '
-                . 'server user can use',
+                . 'writable by others, or in a parent dir others can write to that is not sticky): early '
+                . 'bans are off. Set WAF_DATA_DIR to a dir only the web server user can use',
                 wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
             ));
             return;
@@ -794,18 +797,36 @@ class WafMiddleware implements HTTPMiddleware
      * the new one is in use. It is no longer read, and its config.json showed the trusted proxy list to
      * anyone on the host. Only a real dir owned by this process user is touched; unlink() on a symlink
      * inside it removes the link, not its target.
+     *
+     * Type and owner come from ONE lstat() (waf#9 review: is_link() then fileowner() let the entry be
+     * swapped in between), and only the files 1.7.0 wrote are deleted: config.json, ban_<md5> and
+     * viol_<md5>. Anything else means the dir is not (only) the WAF's, so it and the dir stay.
+     * Needs posix to know the owner; without it the old dir is left for the admin to remove.
      */
     protected function removeLegacyEarlyFilterDir(string $moduleRoot): void
     {
         $legacyDir = sys_get_temp_dir() . '/waf_' . substr(md5($moduleRoot), 0, 8);
-        if (is_link($legacyDir) || !is_dir($legacyDir)) {
+        //if (is_link($legacyDir) || !is_dir($legacyDir)) {
+        //    return;
+        //}
+        //if (!function_exists('posix_geteuid') || @fileowner($legacyDir) !== posix_geteuid()) {
+        //    return;
+        //}
+        clearstatcache(true, $legacyDir);
+        $stat = @lstat($legacyDir);
+        # A real dir (S_IFDIR, so not a symlink), owned by this process user
+        if ($stat === false || ($stat['mode'] & 0170000) !== 0040000) {
             return;
         }
-        if (!function_exists('posix_geteuid') || @fileowner($legacyDir) !== posix_geteuid()) {
+        if (!function_exists('posix_geteuid') || $stat['uid'] !== posix_geteuid()) {
             return;
         }
         foreach (@scandir($legacyDir) ?: [] as $file) {
-            if ($file === '.' || $file === '..') {
+            //if ($file === '.' || $file === '..') {
+            //    continue;
+            //}
+            # The names 1.7.0 wrote, nothing else (this also skips . and ..)
+            if ($file !== 'config.json' && !wafIsDataFileName($file)) {
                 continue;
             }
             $path = $legacyDir . '/' . $file;

@@ -296,6 +296,55 @@ class EarlyFilterDataDirTest extends SapphireTest
     }
 
     /**
+     * Removing the 1.7.0 dir only deletes the files 1.7.0 wrote there (config.json, ban_<md5>,
+     * viol_<md5>): anything else in a dir at that name is not the WAF's, so it and the dir stay.
+     */
+    public function testMiddlewareOnlyRemovesTheOldFilesFromTheOldSharedDir(): void
+    {
+        $oldDir = sys_get_temp_dir() . '/waf_' . substr(md5($this->moduleRoot()), 0, 8);
+        if (!is_dir($oldDir)) {
+            mkdir($oldDir, 0755);
+        }
+        try {
+            file_put_contents($oldDir . '/config.json', '{}');
+            file_put_contents($oldDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+            file_put_contents($oldDir . '/viol_' . md5(self::CLIENT), '1:' . time());
+            file_put_contents($oldDir . '/notes.txt', 'not the WAF\'s');
+            file_put_contents($oldDir . '/.hidden', 'not the WAF\'s');
+
+            putenv('WAF_DATA_DIR=' . $this->tmpDir . '/new');
+            $this->invokeWriteEarlyFilterConfig('');
+
+            clearstatcache();
+            $left = is_dir($oldDir) ? array_values(array_diff(scandir($oldDir), ['.', '..'])) : null;
+        } finally {
+            $this->removeDir($oldDir);
+        }
+        $this->assertSame(['.hidden', 'notes.txt'], $left, 'the 1.7.0 files are gone, the rest and the dir stay');
+    }
+
+    /**
+     * The data dir is only trusted while its parent is not writable by others, unless that parent is
+     * sticky like /tmp. In a parent anyone can write to and rename in, the dir that passed the checks
+     * can be swapped for another (a symlink, someone else's dir) right after: the checks prove nothing.
+     */
+    public function testDataDirInAParentOthersCanWriteToIsRefused(): void
+    {
+        $parent = $this->tmpDir . '/open-parent';
+        mkdir($parent, 0777);
+        chmod($parent, 0777);
+        $dataDir = $parent . '/' . $this->dataDirName();
+        mkdir($dataDir, 0700);
+        file_put_contents($dataDir . '/ban_' . md5(self::CLIENT), (string) (time() + 3600));
+        $env = ['WAF_DATA_DIR' => $parent];
+
+        $this->assertSame('PASSED', $this->runFilter(self::CLIENT, [], $env), 'refused: the ban in it is not read');
+
+        chmod($parent, 01777);
+        $this->assertSame('FORBIDDEN', $this->runFilter(self::CLIENT, [], $env), 'control: a sticky parent like /tmp is fine');
+    }
+
+    /**
      * WAF_DATA_DIR may name a dir that holds other things (the project root, a shared data dir): the WAF
      * keeps its files in a waf-<uid>-<hash> dir of its own inside it, and never changes the mode of the
      * dir it was given. 1.8.0-dev used WAF_DATA_DIR itself and chmodded it to 0700.
