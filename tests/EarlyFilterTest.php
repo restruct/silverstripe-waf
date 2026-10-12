@@ -93,6 +93,15 @@ class EarlyFilterTest extends TestCase
             '/site.env', '/config/prod.env',
             // mail-probe (waf#1)
             '/autodiscover/autodiscover.xml', '/Autodiscover/Autodiscover.xml', '/FPURL.xml',
+            // exploit probes from a production 404 log (waf#12)
+            '/langflow/api/v1/login', '/flowise/api/v1/chatflows', '/api/v1/build_public_tmp/abc/flow',
+            '/api/v1/node-load-method/customMCP', '/functionRouter', '/api/functionRouter',
+            '/api/fs/exec', '/php-cgi/php-cgi.exe',
+            '/var/run/secrets/kubernetes.io/serviceaccount/token', '/__/firebase/init.json',
+            '/config/gcp-credentials.json', '/Dockerfile', '/fly.toml', '/netlify.toml',
+            '/railway.toml', '/wrangler.toml', '/supabase/config.toml',
+            '/ssl/server.key', '/ssl/localhost.key',
+            '/__vite_rsc_findSourceMapURL', '/__webpack_hmr',
         ]);
     }
 
@@ -136,6 +145,11 @@ class EarlyFilterTest extends TestCase
             '/vacatures/xmlroc',
             '/mbo-opleidingen/gezondheidszorg',
             '/api/testimonials',
+            // waf#12: probe paths that are also plausible page slugs or a site's own API stay out,
+            // and the new subtree/exact entries must not reach neighbouring words
+            '/read-document', '/exec-py', '/api/v1/validate/code',
+            '/langflow', '/langflow-guide', '/flowise', '/blog/dockerfile-tips',
+            '/functionrouter-uitleg', '/ssl/certificaten', '/var/runtime',
         ]);
     }
 
