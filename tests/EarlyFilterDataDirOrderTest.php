@@ -15,8 +15,8 @@ use SilverStripe\Dev\SapphireTest;
  * folder (constants.php, TempFolder::getTempParentFolder()), from what the early filter can see:
  *   1. WAF_DATA_DIR (real env), as in 1.8.0;
  *   2. SS_TEMP_PATH (real env: $_ENV, $_SERVER or getenv(), never .env); relative = under the project root;
- *   3. <project>/silverstripe-cache when it exists and is a safe parent (the framework makes it 0777, which
- *      is not; 1777 is);
+ *   3. <project>/silverstripe-cache when it exists and we can write to it, whatever its mode (the framework
+ *      makes it 0777; mic 2026-10-12 dropped the sticky requirement of 1.9.0-dev);
  *   4. the system temp dir, as in 1.8.0.
  * The private-dir checks of 1.8.0 (EarlyFilterDataDirTest) apply on every branch.
  *
@@ -266,43 +266,43 @@ class EarlyFilterDataDirOrderTest extends SapphireTest
     }
 
     /**
-     * Step 3: the project's silverstripe-cache, the framework's first choice, is used when it is a safe
-     * parent. 1777 is what the framework leaves alone (its test is mode & 0777) and sticky is safe: nobody
-     * can rename our dir in it. The dir is private (0700) like everywhere else.
+     * Step 3: the project's silverstripe-cache, the framework's first choice, is used when it exists,
+     * whatever its mode, as the framework does (mic 2026-10-12): 0777 is how the framework leaves it, 0755
+     * how a deploy makes it, 1777 what the framework also leaves alone. The WAF's own dir in it is private
+     * (0700) like everywhere else.
      */
-    public function testStickySilverstripeCacheIsUsed(): void
+    public function testSilverstripeCacheIsUsedWhateverItsMode(): void
     {
-        mkdir($this->project . '/silverstripe-cache', 01777);
-        chmod($this->project . '/silverstripe-cache', 01777);
+        $cacheDir = $this->project . '/silverstripe-cache';
+        $actual = [];
+        foreach (['0777' => 0777, '0755' => 0755, '1777' => 01777] as $label => $mode) {
+            mkdir($cacheDir, $mode);
+            chmod($cacheDir, $mode);
+            $actual[$label] = [$this->banClient([]), $this->dataDirsIn($this->parents())];
+            $this->chmodTree($cacheDir);
+            $this->removeDir($cacheDir);
+        }
 
-        $this->assertSame('FORBIDDEN', $this->banClient([]));
-        $this->assertSame(['silverstripe-cache' => '0700'], $this->dataDirsIn($this->parents()));
+        $used = ['FORBIDDEN', ['silverstripe-cache' => '0700']];
+        $this->assertSame(['0777' => $used, '0755' => $used, '1777' => $used], $actual);
     }
 
     /**
-     * Step 3 is passed over when silverstripe-cache is writable by others and not sticky, which is how the
-     * framework leaves it (it chmods it to 0777 on boot): anyone could swap our dir in it right after the
-     * checks. The filter goes on to the system temp dir instead of switching the early ban off, and a ban
-     * planted in silverstripe-cache is not read.
+     * Step 3 is passed over when the PHP user cannot write to silverstripe-cache (e.g. a deploy user made
+     * it 0555 or owns it 0755): the filter goes on to the system temp dir instead of switching the early ban
+     * off. The framework only asks file_exists() and would fail there; the WAF has a next step to go to.
      */
-    public function testSilverstripeCacheOthersCanWriteToIsPassedOver(): void
+    public function testSilverstripeCacheWeCannotWriteToIsPassedOver(): void
     {
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            $this->markTestSkipped('root can write to any dir');
+        }
         $cacheDir = $this->project . '/silverstripe-cache';
-        mkdir($cacheDir, 0777);
-        chmod($cacheDir, 0777);
-        $planted = $cacheDir . '/' . $this->dataDirName($this->moduleCopy);
-        mkdir($planted, 0700);
-        file_put_contents($planted . '/ban_' . md5(self::PROXY), (string) (time() + 3600));
+        mkdir($cacheDir, 0555);
+        chmod($cacheDir, 0555);
 
-        $this->assertSame(
-            ['planted ban in silverstripe-cache' => 'PASSED', 'early ban still works' => 'FORBIDDEN'],
-            [
-                'planted ban in silverstripe-cache' => $this->runFilter($this->moduleCopy, self::PROXY, '/', []),
-                'early ban still works' => $this->banClient([]),
-            ]
-        );
-        $this->assertSame('0700', $this->dataDirsIn(['system temp' => $this->sysTemp])['system temp'] ?? null);
-        $this->assertSame(['ban_' . md5(self::PROXY)], array_values(array_diff(scandir($planted), ['.', '..'])), 'nothing written in silverstripe-cache');
+        $this->assertSame('FORBIDDEN', $this->banClient([]));
+        $this->assertSame(['system temp' => '0700'], $this->dataDirsIn($this->parents()));
     }
 
     /**
@@ -310,8 +310,8 @@ class EarlyFilterDataDirOrderTest extends SapphireTest
      */
     public function testSsTempPathWinsOverSilverstripeCache(): void
     {
-        mkdir($this->project . '/silverstripe-cache', 01777);
-        chmod($this->project . '/silverstripe-cache', 01777);
+        mkdir($this->project . '/silverstripe-cache', 0777);
+        chmod($this->project . '/silverstripe-cache', 0777);
         $tempPath = $this->tmpDir . '/ss-temp';
         mkdir($tempPath, 0755);
 
@@ -320,25 +320,39 @@ class EarlyFilterDataDirOrderTest extends SapphireTest
     }
 
     /**
-     * The private-dir checks hold on the new branches too: an SS_TEMP_PATH others can write to (and not
-     * sticky) is refused like such a WAF_DATA_DIR, so no early ban there rather than files anyone could
-     * have planted.
+     * An SS_TEMP_PATH others can write to is used like the framework uses it (mic 2026-10-12: the parent is
+     * not checked).
      */
-    public function testSsTempPathOthersCanWriteToIsRefused(): void
+    public function testSsTempPathOthersCanWriteToIsUsed(): void
     {
         $tempPath = $this->tmpDir . '/ss-temp';
         mkdir($tempPath, 0777);
         chmod($tempPath, 0777);
+
+        $this->assertSame('FORBIDDEN', $this->banClient(['SS_TEMP_PATH' => $tempPath]));
+        $this->assertSame(['SS_TEMP_PATH' => '0700'], $this->dataDirsIn($this->parents(['SS_TEMP_PATH' => $tempPath])));
+    }
+
+    /**
+     * The private-dir checks hold on the new branches too: a WAF dir in SS_TEMP_PATH that others can write
+     * to is refused, like one in WAF_DATA_DIR, so no early ban there rather than files anyone could have
+     * planted. A step you configured is never silently swapped for the system temp dir.
+     */
+    public function testDataDirOthersCanWriteToInSsTempPathIsRefused(): void
+    {
+        $tempPath = $this->tmpDir . '/ss-temp';
+        mkdir($tempPath, 0755);
         $planted = $tempPath . '/' . $this->dataDirName($this->moduleCopy);
-        mkdir($planted, 0700);
+        mkdir($planted, 0777);
+        chmod($planted, 0777);
         file_put_contents($planted . '/ban_' . md5(self::PROXY), (string) (time() + 3600));
 
         $this->assertSame('PASSED', $this->runFilter($this->moduleCopy, self::PROXY, '/', ['SS_TEMP_PATH' => $tempPath]), 'the planted ban is not read');
         $this->assertSame('PASSED', $this->banClient(['SS_TEMP_PATH' => $tempPath]), 'refused: no early ban');
         $this->assertSame([], $this->dataDirsIn(['system temp' => $this->sysTemp]), 'and no fall-back to the system temp dir');
 
-        # Control: the same dir made sticky is used
-        chmod($tempPath, 01777);
+        # Control: the same dir made private is used
+        chmod($planted, 0700);
         $this->assertSame('FORBIDDEN', $this->runFilter($this->moduleCopy, self::PROXY, '/', ['SS_TEMP_PATH' => $tempPath]));
     }
 
@@ -351,8 +365,8 @@ class EarlyFilterDataDirOrderTest extends SapphireTest
     {
         $elsewhere = $this->installModuleCopy($this->tmpDir . '/elsewhere/silverstripe-waf');
         mkdir($this->tmpDir . '/elsewhere/var-cache', 0755);
-        mkdir($this->tmpDir . '/elsewhere/silverstripe-cache', 01777);
-        chmod($this->tmpDir . '/elsewhere/silverstripe-cache', 01777);
+        mkdir($this->tmpDir . '/elsewhere/silverstripe-cache', 0777);
+        chmod($this->tmpDir . '/elsewhere/silverstripe-cache', 0777);
 
         $this->assertSame('FORBIDDEN', $this->banClient(['SS_TEMP_PATH' => 'var-cache'], [], $elsewhere));
         $this->assertSame(
