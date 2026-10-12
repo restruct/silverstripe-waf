@@ -1,5 +1,15 @@
 # Upgrading
 
+## 1.8.x to 1.9.0
+
+Nothing to do for most sites. The early filter's data directory (early bans, violation counters,
+`config.json`) now follows the framework's temp folder order: `WAF_DATA_DIR`, then `SS_TEMP_PATH`, then a
+sticky `<project>/silverstripe-cache`, then the system temp directory. It only moves when `SS_TEMP_PATH`
+is set in the real environment (not only in `.env`) or `silverstripe-cache` is mode `1777`. Where it
+moves, early bans and counters start from zero (they last an hour by default) and the old directory in the
+system temp directory can be deleted. A `WAF_DATA_DIR` keeps working as before. Details:
+[docs/early-filter.md](docs/early-filter.md#where-the-early-filter-keeps-its-files).
+
 ## 1.5.x to 1.6.0
 
 1.6.0 keeps one line for Silverstripe 5 and 6 (`composer.json` is the source of truth: framework

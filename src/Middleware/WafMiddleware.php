@@ -711,6 +711,9 @@ class WafMiddleware implements HTTPMiddleware
      *
      * The dir is resolved by _waf_datadir.php, which the early filter uses too (waf#9): private to the
      * process user (0700, not a symlink), WAF_DATA_DIR or a per-user dir in the system temp dir.
+     * Since 1.9.0 its parent follows the framework's temp folder order: WAF_DATA_DIR, SS_TEMP_PATH, the
+     * project's silverstripe-cache (when sticky or otherwise safe), the system temp dir
+     * (wafEarlyDataDirParent()). Only from what the early filter can see too, never from .env.
      */
     protected function writeEarlyFilterConfig(): void
     {
@@ -731,11 +734,19 @@ class WafMiddleware implements HTTPMiddleware
                 //'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
                 //. 'writable by others, or in a parent dir others can write to that is not sticky): early '
                 //. 'bans are off. Set WAF_DATA_DIR to a dir only the web server user can use',
-                'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
-                . 'writable by others, or in a parent dir that is not ours or root\'s, or that others can '
-                . 'write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                //'no private data dir for the early filter (%s is missing, not absolute, a symlink, not ours, '
+                //. 'writable by others, or in a parent dir that is not ours or root\'s, or that others can '
+                //. 'write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                //. 'server user can use',
+                //wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
+                # Name where the parent came from (1.9.0): with SS_TEMP_PATH in the picture, "set WAF_DATA_DIR"
+                # alone no longer says why this dir was chosen
+                'no private data dir for the early filter (%s, from %s, is missing, not absolute, a symlink, '
+                . 'not ours, writable by others, or in a parent dir that is not ours or root\'s, or that others '
+                . 'can write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
                 . 'server user can use',
-                wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
+                wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR'),
+                wafEarlyDataDirParent($moduleRoot)['source'] ?? 'WAF_DATA_DIR'
             ));
             return;
         }
@@ -762,6 +773,23 @@ class WafMiddleware implements HTTPMiddleware
                 'WAF_DATA_DIR is set in .env, which the early filter cannot read (it runs before .env is '
                 . 'loaded), so it is ignored. Set it in the web server or PHP-FPM environment instead'
             );
+        }
+
+        # The same for SS_TEMP_PATH (1.9.0): the framework reads it from .env too, the early filter cannot, so
+        # a value only there moves the framework's caches but not the WAF's data dir. Compared with what the
+        # framework sees: EnvironmentLoader never overwrites a variable the real environment already has, so a
+        # difference means .env (or Environment::setEnv()). Moot when WAF_DATA_DIR decides the dir anyway.
+        $frameworkTempPath = (string) Environment::getEnv('SS_TEMP_PATH');
+        if (trim((string) getenv('WAF_DATA_DIR')) === ''
+            && $frameworkTempPath !== ''
+            && $frameworkTempPath !== (string) wafRealEnv('SS_TEMP_PATH')
+        ) {
+            $this->warnEarlyFilterDataDir(sprintf(
+                'SS_TEMP_PATH is set in .env, which the early filter cannot read (it runs before .env is '
+                . 'loaded), so the early filter\'s data dir does not follow it and stays in %s. Set SS_TEMP_PATH '
+                . 'in the web server or PHP-FPM environment, or WAF_DATA_DIR',
+                dirname($wafDataDir)
+            ));
         }
 
         $this->removeLegacyEarlyFilterDir($moduleRoot);

@@ -67,6 +67,8 @@ WAF_EARLY_BAN=false
 # Early filter data dir: the WAF keeps its files in a waf-<uid>-<hash> dir inside it
 # (absolute path; real environment only, not .env - see early-filter.md)
 WAF_DATA_DIR=/home/site/waf-data
+# Without WAF_DATA_DIR the data dir follows the framework's temp folder: SS_TEMP_PATH (real
+# environment only), else a sticky (1777) <project>/silverstripe-cache, else the system temp dir
 
 # Whitelist IPs (comma-separated, supports CIDR)
 WAF_WHITELIST_IPS="1.2.3.4,5.6.7.8,10.0.0.0/8"

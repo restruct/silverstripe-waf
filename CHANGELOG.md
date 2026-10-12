@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.9.0 (Unreleased)
+
+### Changed
+
+- **The early filter's data directory follows the framework's temp folder order.** 1.8.0 used
+  `WAF_DATA_DIR`, else the system temp directory. The parent of the `waf-<uid>-<hash>` directory is now
+  picked the way Silverstripe picks its own temp folder (`TEMP_PATH`, same on 5 and 6), so a site's caches
+  and the WAF's files follow one rule: `WAF_DATA_DIR`; else `SS_TEMP_PATH` (relative to the project root,
+  as the framework resolves it); else `<project>/silverstripe-cache` when it exists and is a safe parent;
+  else the system temp directory. All of 1.8.0's checks apply on every branch (private `0700` directory
+  of the PHP user, not a symlink, `0600` files, a parent of root or the PHP user that others cannot write
+  to unless sticky). The framework makes `silverstripe-cache` `0777` on every request, which is not a safe
+  parent, so a plain one is passed over for the system temp directory rather than switching the early ban
+  off; `chmod 1777 silverstripe-cache` (which the framework leaves alone) puts the WAF's files there. Like
+  `WAF_DATA_DIR`, `SS_TEMP_PATH` only counts from the real environment (process environment or a server
+  variable such as `fastcgi_param`), never from `.env`, which is loaded after the early filter has run;
+  with `SS_TEMP_PATH` only in `.env` the middleware logs a warning that the WAF's files do not follow it.
+  The project root comes from the module's install path (`<project>/vendor/...`); a module symlinked in
+  from elsewhere skips the project-relative steps. Where the directory moves on upgrade, early bans and
+  counters start from zero. See docs/early-filter.md, "Where the early filter keeps its files", and
+  UPGRADING.md. Covered by `EarlyFilterDataDirOrderTest` on Silverstripe 5 and 6.
+
 ## 1.8.1 (2026-10-12)
 
 ### Added

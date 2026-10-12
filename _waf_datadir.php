@@ -19,6 +19,11 @@
  *   - sys_get_temp_dir()/waf-<uid>-<hash>: per process user, so a CLI user and the web user do not
  *     fight over one dir.
  *   WAF_DATA_DIR names the parent: the WAF only ever changes or cleans the dir it named itself.
+ * Since 1.9.0 the parent follows the order in which the framework picks its own temp folder (TEMP_PATH,
+ * constants.php and TempFolder::getTempParentFolder()), so there is one rule for where a site keeps its
+ * caches: WAF_DATA_DIR, else SS_TEMP_PATH (real env; relative = under the project root), else the
+ * project's silverstripe-cache/ when it exists and is a safe parent (see wafEarlyDataDirParent()), else
+ * the system temp dir. See wafEarlyDataDirParent() for each step and where it differs from the framework.
  * Either way the dir is only used while it is private: a real dir (not a symlink), owned by this
  * process user, mode 0700. A dir of ours that others can only read is tightened to 0700; one that
  * others can write to is refused, because its contents may be anyone's. Refused means the early ban is
@@ -41,9 +46,10 @@
 if (!function_exists('wafEarlyDataDirPath')) {
     /**
      * The data dir path this process would use, whether or not it exists or is safe: a dir named
-     * waf-<uid>-<hash> (see wafEarlyDataDirName()) inside WAF_DATA_DIR when that is set, else inside the
-     * system temp dir. Null when WAF_DATA_DIR is set but not absolute: a relative path would depend on the
-     * cwd, which differs between the filter and the middleware.
+     * waf-<uid>-<hash> (see wafEarlyDataDirName()) inside the parent wafEarlyDataDirParent() picks:
+     * WAF_DATA_DIR, SS_TEMP_PATH, the project's silverstripe-cache or the system temp dir (1.8.0: WAF_DATA_DIR
+     * when set, else the system temp dir). Null when WAF_DATA_DIR is set but not absolute: a relative path
+     * would depend on the cwd, which differs between the filter and the middleware.
      *
      * WAF_DATA_DIR is the parent, never the data dir itself (waf#9 review): it may be a dir that holds other
      * things (the project root, a shared data dir), and the WAF tightens the mode of its data dir and
@@ -53,17 +59,129 @@ if (!function_exists('wafEarlyDataDirPath')) {
      */
     function wafEarlyDataDirPath(string $moduleDir): ?string
     {
-        $base = sys_get_temp_dir();
+        //$base = sys_get_temp_dir();
+        //$configured = trim((string) getenv('WAF_DATA_DIR'));
+        //if ($configured !== '') {
+        //    # Absolute on POSIX, or a Windows drive / UNC path
+        //    if (!preg_match('#^(/|[A-Za-z]:[\\\\/]|\\\\\\\\)#', $configured)) {
+        //        return null;
+        //    }
+        //    $base = $configured;
+        //}
+        # The parent now follows the framework's temp folder order (1.9.0): see wafEarlyDataDirParent()
+        $parent = wafEarlyDataDirParent($moduleDir);
+        if ($parent === null) {
+            return null;
+        }
+        $base = $parent['path'];
+
+        return (rtrim($base, '/\\') ?: $base) . DIRECTORY_SEPARATOR . wafEarlyDataDirName($moduleDir);
+    }
+}
+
+if (!function_exists('wafEarlyDataDirParent')) {
+    /**
+     * Where the data dir goes, as ['source' => ..., 'path' => parent dir], in the order the framework picks
+     * its own temp folder (constants.php for SS_TEMP_PATH, then TempFolder::getTempParentFolder(); same on
+     * Silverstripe 5 and 6), so a site has one rule for where its caches live:
+     *
+     *  1. WAF_DATA_DIR (real env var, absolute path), as in 1.8.0. Null when it is set but not absolute: a
+     *     relative path would depend on the cwd, which differs between the filter and the middleware.
+     *  2. SS_TEMP_PATH, the framework's own override of TEMP_PATH, from the real environment only. A relative
+     *     value is under the project root, as the framework resolves it (relative = not starting with
+     *     DIRECTORY_SEPARATOR, its own test). Relative with no known project root: skipped.
+     *  3. <project root>/silverstripe-cache when it exists, the framework's first choice, but only when it is
+     *     a safe parent (wafIsSafeParent(): ours or root's, and not writable by others unless sticky).
+     *     The framework chmods it to 0777 on every boot whose mode is not 0777 (fw5 and fw6
+     *     getTempParentFolder(), measured on 5.4.30 and 6.2.11), and in a dir anyone can write to and rename
+     *     in, our dir could be swapped right after the checks. The framework leaves a 1777 dir alone (its
+     *     test is mode & 0777), so `chmod 1777 silverstripe-cache` is what puts the data here; a plain
+     *     0777 one falls through to step 4 instead of switching the early ban off.
+     *  4. The system temp dir, as in 1.8.0.
+     *
+     * Steps 2 and 3 are not in the framework's per-user subfolder (TEMP_PATH itself, <parent>/<user>[-php]):
+     * that one is a plain mkdir() that anyone who can write to the parent may create first, so the WAF keeps
+     * its own waf-<uid>-<hash> dir next to it, with its own checks.
+     *
+     * Only what the early filter can see counts, because both layers must agree on the dir: the real process
+     * environment, never .env (Silverstripe keeps that in Environment's own store, loaded after the filter
+     * has run), and the project root as worked out from the module's own path (wafProjectRoot()).
+     */
+    function wafEarlyDataDirParent(string $moduleDir): ?array
+    {
         $configured = trim((string) getenv('WAF_DATA_DIR'));
         if ($configured !== '') {
             # Absolute on POSIX, or a Windows drive / UNC path
             if (!preg_match('#^(/|[A-Za-z]:[\\\\/]|\\\\\\\\)#', $configured)) {
                 return null;
             }
-            $base = $configured;
+            return ['source' => 'WAF_DATA_DIR', 'path' => $configured];
         }
 
-        return (rtrim($base, '/\\') ?: $base) . DIRECTORY_SEPARATOR . wafEarlyDataDirName($moduleDir);
+        $projectRoot = wafProjectRoot($moduleDir);
+
+        # The framework: if ($path = Environment::getEnv('SS_TEMP_PATH')), so '' and '0' do not count, and the
+        # value is used as it is (not trimmed)
+        $tempPath = (string) wafRealEnv('SS_TEMP_PATH');
+        if ($tempPath !== '' && $tempPath !== '0') {
+            if (ltrim($tempPath, DIRECTORY_SEPARATOR) !== $tempPath) {
+                return ['source' => 'SS_TEMP_PATH', 'path' => $tempPath];
+            }
+            if ($projectRoot !== null) {
+                return ['source' => 'SS_TEMP_PATH', 'path' => $projectRoot . DIRECTORY_SEPARATOR . $tempPath];
+            }
+        }
+
+        if ($projectRoot !== null) {
+            $cacheDir = $projectRoot . DIRECTORY_SEPARATOR . 'silverstripe-cache';
+            clearstatcache(true, $cacheDir);
+            # is_dir() follows a symlink, like the framework's file_exists(): a silverstripe-cache linked in
+            # from a shared dir is the one it uses. Windows has no POSIX modes (see wafIsPrivateDir())
+            if (@is_dir($cacheDir) && (DIRECTORY_SEPARATOR === '\\' || wafIsSafeParent($cacheDir))) {
+                return ['source' => 'silverstripe-cache', 'path' => $cacheDir];
+            }
+        }
+
+        return ['source' => 'system temp dir', 'path' => sys_get_temp_dir()];
+    }
+}
+
+if (!function_exists('wafProjectRoot')) {
+    /**
+     * The project root, from the module's own path: the dir that holds vendor/<vendor>/<package>. That is the
+     * framework's BASE_PATH for a Composer install (it takes the dir above vendor/composer/autoload_real.php,
+     * realpath()ed; PHP's __DIR__ is a realpath too). The early filter runs before the autoloader and has
+     * nothing else to go on, and the middleware uses this too (not BASE_PATH) so both layers agree.
+     *
+     * Null when the module is not under a vendor dir, e.g. a path repository symlinked in for local
+     * development (__DIR__ is then the symlink's target): steps 2 (relative) and 3 of wafEarlyDataDirParent()
+     * are skipped there.
+     */
+    function wafProjectRoot(string $moduleDir): ?string
+    {
+        if (!preg_match('#^(?<base>.*)[/\\\\]vendor[/\\\\][^/\\\\]+[/\\\\][^/\\\\]+$#D', rtrim($moduleDir, '/\\'), $matches)) {
+            return null;
+        }
+        # Installed at /vendor/... (a chroot): the root is /, as the framework's own fallback has it
+        return $matches['base'] !== '' ? $matches['base'] : DIRECTORY_SEPARATOR;
+    }
+}
+
+if (!function_exists('wafRealEnv')) {
+    /**
+     * An environment variable as Environment::getEnv() finds it, minus its own store (.env and setEnv()),
+     * which the early filter cannot see: $_ENV, then $_SERVER (where a web server's fastcgi_param ends up),
+     * then getenv(). False when it is in none of them.
+     */
+    function wafRealEnv(string $name)
+    {
+        if (isset($_ENV[$name])) {
+            return $_ENV[$name];
+        }
+        if (isset($_SERVER[$name])) {
+            return $_SERVER[$name];
+        }
+        return getenv($name);
     }
 }
 
