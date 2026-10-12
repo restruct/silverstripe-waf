@@ -1,6 +1,6 @@
 {
     "schema": 1,
-    "version": "1.6.0",
+    "version": "1.8.1",
     "entries": [
         {
             "pattern": "/@vite",
@@ -10,6 +10,16 @@
         {
             "pattern": "/@vite/",
             "match": "prefix",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/__vite_rsc_findsourcemapurl",
+            "match": "exact",
+            "class": "build-tool"
+        },
+        {
+            "pattern": "/__webpack_hmr",
+            "match": "exact",
             "class": "build-tool"
         },
         {
@@ -32,6 +42,11 @@
             "match": "suffix",
             "class": "config-leak",
             "note": "replaces the old config.env/stripe.env pair: any path ending .env"
+        },
+        {
+            "pattern": "/__/firebase/init.json",
+            "match": "exact",
+            "class": "config-leak"
         },
         {
             "pattern": "/__env.js",
@@ -79,6 +94,11 @@
             "class": "config-leak"
         },
         {
+            "pattern": "/config/gcp-credentials.json",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
             "pattern": "/configuration.php",
             "match": "suffix",
             "class": "config-leak"
@@ -104,12 +124,22 @@
             "class": "config-leak"
         },
         {
+            "pattern": "/dockerfile",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
             "pattern": "/env.backup",
             "match": "exact",
             "class": "config-leak"
         },
         {
             "pattern": "/env.js",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/fly.toml",
             "match": "exact",
             "class": "config-leak"
         },
@@ -144,6 +174,11 @@
             "class": "config-leak"
         },
         {
+            "pattern": "/netlify.toml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
             "pattern": "/package.json",
             "match": "exact",
             "class": "config-leak"
@@ -164,6 +199,11 @@
             "class": "config-leak"
         },
         {
+            "pattern": "/railway.toml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
             "pattern": "/rakefile",
             "match": "exact",
             "class": "config-leak"
@@ -174,7 +214,33 @@
             "class": "config-leak"
         },
         {
+            "pattern": "/ssl/localhost.key",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/ssl/server.key",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/supabase/config.toml",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/var/run/secrets/",
+            "match": "prefix",
+            "class": "config-leak",
+            "note": "Kubernetes service-account token and mounted secrets"
+        },
+        {
             "pattern": "/web.config",
+            "match": "exact",
+            "class": "config-leak"
+        },
+        {
+            "pattern": "/wrangler.toml",
             "match": "exact",
             "class": "config-leak"
         },
@@ -484,6 +550,49 @@
             "pattern": "/test.php",
             "match": "exact",
             "class": "php-probe"
+        },
+        {
+            "pattern": "/api/fs/exec",
+            "match": "exact",
+            "class": "rce-probe"
+        },
+        {
+            "pattern": "/api/functionrouter",
+            "match": "exact",
+            "class": "rce-probe"
+        },
+        {
+            "pattern": "/api/v1/build_public_tmp/",
+            "match": "prefix",
+            "class": "rce-probe"
+        },
+        {
+            "pattern": "/api/v1/node-load-method/",
+            "match": "prefix",
+            "class": "rce-probe"
+        },
+        {
+            "pattern": "/flowise/",
+            "match": "prefix",
+            "class": "rce-probe",
+            "note": "subtree only; a bare /flowise page stays reachable"
+        },
+        {
+            "pattern": "/functionrouter",
+            "match": "exact",
+            "class": "rce-probe",
+            "note": "matching is case-insensitive; also covers /functionRouter"
+        },
+        {
+            "pattern": "/langflow/",
+            "match": "prefix",
+            "class": "rce-probe",
+            "note": "subtree only; a bare /langflow page stays reachable"
+        },
+        {
+            "pattern": "/php-cgi/php-cgi.exe",
+            "match": "exact",
+            "class": "rce-probe"
         },
         {
             "pattern": "/cgi-bin",

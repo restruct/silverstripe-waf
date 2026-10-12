@@ -44,7 +44,10 @@ which this summary may lag. See [Extending](extending.md#custom-blocked-patterns
 `config.env`, `stripe.env`, `/env.js`, `/env.backup`, `/__env.js`
 
 **Build tool / framework dev probes:**
-`/@vite/`, `/.vite/`, `/node_modules/`, `/asset-manifest.json`
+`/@vite/`, `/.vite/`, `/node_modules/`, `/asset-manifest.json`, `/__webpack_hmr`
+
+**Exploit endpoints of other apps:**
+`/langflow/`, `/flowise/`, `/functionRouter`, `/api/fs/exec`, `/php-cgi/php-cgi.exe`
 
 **Other CMS admin paths:**
 `/administrator/index.php`, `/phpmyadmin`, `/pma/`, `/myadmin/`, `/adminer`

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.1 (2026-10-12)
+
+### Added
+
+- **Exploit probes from a production 404 log added to the inventory** (waf#12). A new `rce-probe`
+  class blocks the exploit endpoints of apps no Silverstripe site runs: Langflow (`/langflow/`,
+  `/api/v1/build_public_tmp/`), Flowise (`/flowise/`, `/api/v1/node-load-method/`), Spring Cloud
+  Function (`/functionRouter`, `/api/functionRouter`), `/api/fs/exec` and PHP-CGI on Windows
+  (`/php-cgi/php-cgi.exe`, CVE-2024-4577). `config-leak` gains `/var/run/secrets/` (Kubernetes),
+  `/__/firebase/init.json`, `/config/gcp-credentials.json`, `/Dockerfile`, `/fly.toml`,
+  `/netlify.toml`, `/railway.toml`, `/wrangler.toml`, `/supabase/config.toml`, `/ssl/server.key` and
+  `/ssl/localhost.key`; `build-tool` gains `/__vite_rsc_findSourceMapURL` and `/__webpack_hmr`.
+  `/langflow/` and `/flowise/` match the subtree only, so a page called `/langflow` stays reachable.
+  Left out as words a site might use for a page or its own API: `/read-document`,
+  `/feast/read-document`, `/exec-py`, `/api/v1/validate/code` and `/debug/vars` (bare `/debug/` was
+  dropped as content vocabulary in 1.5.0). `resources/blocklist.json` is regenerated (additions only).
+
 ## 1.8.0 (2026-10-08)
 
 ### Fixed
