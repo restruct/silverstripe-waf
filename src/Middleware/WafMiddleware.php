@@ -712,7 +712,7 @@ class WafMiddleware implements HTTPMiddleware
      * The dir is resolved by _waf_datadir.php, which the early filter uses too (waf#9): private to the
      * process user (0700, not a symlink), WAF_DATA_DIR or a per-user dir in the system temp dir.
      * Since 1.9.0 its parent follows the framework's temp folder order: WAF_DATA_DIR, SS_TEMP_PATH, the
-     * project's silverstripe-cache (when sticky or otherwise safe), the system temp dir
+     * project's silverstripe-cache (when it exists and is writable, any mode), the system temp dir
      * (wafEarlyDataDirParent()). Only from what the early filter can see too, never from .env.
      */
     protected function writeEarlyFilterConfig(): void
@@ -739,12 +739,15 @@ class WafMiddleware implements HTTPMiddleware
                 //. 'write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
                 //. 'server user can use',
                 //wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR')
+                //'no private data dir for the early filter (%s, from %s, is missing, not absolute, a symlink, '
+                //. 'not ours, writable by others, or in a parent dir that is not ours or root\'s, or that others '
+                //. 'can write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
+                //. 'server user can use',
                 # Name where the parent came from (1.9.0): with SS_TEMP_PATH in the picture, "set WAF_DATA_DIR"
-                # alone no longer says why this dir was chosen
+                # alone no longer says why this dir was chosen. The parent is no longer checked (mic 2026-10-12)
                 'no private data dir for the early filter (%s, from %s, is missing, not absolute, a symlink, '
-                . 'not ours, writable by others, or in a parent dir that is not ours or root\'s, or that others '
-                . 'can write to and is not sticky): early bans are off. Set WAF_DATA_DIR to a dir only the web '
-                . 'server user can use',
+                . 'not ours, or writable by others): early bans are off. Set WAF_DATA_DIR to a dir the web '
+                . 'server user can write to',
                 wafEarlyDataDirPath($moduleRoot) ?? 'WAF_DATA_DIR=' . getenv('WAF_DATA_DIR'),
                 wafEarlyDataDirParent($moduleRoot)['source'] ?? 'WAF_DATA_DIR'
             ));

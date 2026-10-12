@@ -22,14 +22,16 @@
  * Since 1.9.0 the parent follows the order in which the framework picks its own temp folder (TEMP_PATH,
  * constants.php and TempFolder::getTempParentFolder()), so there is one rule for where a site keeps its
  * caches: WAF_DATA_DIR, else SS_TEMP_PATH (real env; relative = under the project root), else the
- * project's silverstripe-cache/ when it exists and is a safe parent (see wafEarlyDataDirParent()), else
- * the system temp dir. See wafEarlyDataDirParent() for each step and where it differs from the framework.
+ * project's silverstripe-cache/ when it exists and we can write to it, whatever its mode, else the system
+ * temp dir. See wafEarlyDataDirParent() for each step and where it differs from the framework.
  * Either way the dir is only used while it is private: a real dir (not a symlink), owned by this
  * process user, mode 0700. A dir of ours that others can only read is tightened to 0700; one that
  * others can write to is refused, because its contents may be anyone's. Refused means the early ban is
  * off and the filter uses its defaults (pattern blocking is unaffected); the middleware logs why.
- * The checks run on one lstat() and only in a parent others cannot write to unless it is sticky, so
- * the dir checked is the dir used. Inside it only regular files of this user are believed.
+ * The checks run on one lstat(). Inside the dir only regular files of this user are believed.
+ * The parent dir is not checked (1.8.0 required one that only root or this user could rename in, i.e.
+ * not writable by others unless sticky): mic 2026-10-12, a local user who can swap dirs in the parent
+ * is a bigger problem than a WAF can solve, and the framework itself runs its caches from a 0777 parent.
  * Files are written 0600 through a temp file and rename(), so a reader never sees half a file.
  *
  * Someone who pre-creates the default path (it is predictable) can make it refused, i.e. switch the
@@ -90,13 +92,12 @@ if (!function_exists('wafEarlyDataDirParent')) {
      *  2. SS_TEMP_PATH, the framework's own override of TEMP_PATH, from the real environment only. A relative
      *     value is under the project root, as the framework resolves it (relative = not starting with
      *     DIRECTORY_SEPARATOR, its own test). Relative with no known project root: skipped.
-     *  3. <project root>/silverstripe-cache when it exists, the framework's first choice, but only when it is
-     *     a safe parent (wafIsSafeParent(): ours or root's, and not writable by others unless sticky).
-     *     The framework chmods it to 0777 on every boot whose mode is not 0777 (fw5 and fw6
-     *     getTempParentFolder(), measured on 5.4.30 and 6.2.11), and in a dir anyone can write to and rename
-     *     in, our dir could be swapped right after the checks. The framework leaves a 1777 dir alone (its
-     *     test is mode & 0777), so `chmod 1777 silverstripe-cache` is what puts the data here; a plain
-     *     0777 one falls through to step 4 instead of switching the early ban off.
+     *  3. <project root>/silverstripe-cache when it exists, the framework's first choice, whatever its mode
+     *     (the framework chmods it to 0777 on every boot whose mode is not 0777: getTempParentFolder() on 5
+     *     and 6). Where the framework only asks file_exists(), this also asks that it is a dir this process
+     *     can write to; one that is not (e.g. made by a deploy user, not writable for the web user) falls
+     *     through to step 4 rather than switching the early ban off. 1.9.0-dev only took a sticky (1777)
+     *     one; dropped by mic 2026-10-12, see the file header.
      *  4. The system temp dir, as in 1.8.0.
      *
      * Steps 2 and 3 are not in the framework's per-user subfolder (TEMP_PATH itself, <parent>/<user>[-php]):
@@ -137,7 +138,9 @@ if (!function_exists('wafEarlyDataDirParent')) {
             clearstatcache(true, $cacheDir);
             # is_dir() follows a symlink, like the framework's file_exists(): a silverstripe-cache linked in
             # from a shared dir is the one it uses. Windows has no POSIX modes (see wafIsPrivateDir())
-            if (@is_dir($cacheDir) && (DIRECTORY_SEPARATOR === '\\' || wafIsSafeParent($cacheDir))) {
+            //if (@is_dir($cacheDir) && (DIRECTORY_SEPARATOR === '\\' || wafIsSafeParent($cacheDir))) {
+            # Any mode (mic 2026-10-12); is_writable() so one we cannot use falls through to the system temp dir
+            if (@is_dir($cacheDir) && @is_writable($cacheDir)) {
                 return ['source' => 'silverstripe-cache', 'path' => $cacheDir];
             }
         }
@@ -258,11 +261,11 @@ if (!function_exists('wafIsPrivateDir')) {
      * Whether $dir is a real dir that only this process user can use, tightening our own dir to 0700 when
      * others can at most read it.
      *
-     * Everything is decided on ONE lstat() of the path (waf#9 review): is_link() followed by is_dir(),
-     * fileowner() and fileperms() is two syscalls, and whoever owns the entry can swap a real dir for a
-     * symlink in between, so the type was checked on one thing and the owner and mode on another. That
-     * single answer only stays true while nobody else can rename the entry, so the parent must not be
-     * writable by others unless it is sticky (like /tmp, where only an entry's owner may rename it).
+     * Everything is decided on ONE lstat() of the path (waf#9 review): type, owner and mode all describe the
+     * same entry. The parent is not checked since 1.9.0 (mic 2026-10-12): 1.8.0 also required a parent that
+     * nobody else could rename entries in (not writable by others unless sticky, owned by root or us), which
+     * only guarded against another local user swapping the dir right after the check, and kept the WAF out
+     * of the framework's own 0777 silverstripe-cache.
      */
     function wafIsPrivateDir(string $dir): bool
     {
@@ -282,9 +285,10 @@ if (!function_exists('wafIsPrivateDir')) {
         if (DIRECTORY_SEPARATOR === '\\') {
             return is_writable($dir);
         }
-        if (!wafIsSafeParent(dirname($dir))) {
-            return false;
-        }
+        # Parent check dropped in 1.9.0 (mic 2026-10-12), see the docblock
+        //if (!wafIsSafeParent(dirname($dir))) {
+        //    return false;
+        //}
         //if (function_exists('posix_geteuid') && @fileowner($dir) !== posix_geteuid()) {
         if (function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid()) {
             return false;
@@ -299,9 +303,7 @@ if (!function_exists('wafIsPrivateDir')) {
             return false;
         }
         # Readable or searchable by others (e.g. a 0755 dir made with a default umask): ours, so tighten it.
-        # chmod() only succeeds for the owner, which also covers a host without posix. It follows a
-        # symlink, but the entry is a dir of ours in a parent where nobody else can rename it (checked
-        # above), so it is still the dir lstat() saw.
+        # chmod() only succeeds for the owner, which also covers a host without posix.
         if (($perms & 0077) !== 0) {
             if (!@chmod($dir, 0700)) {
                 return false;
@@ -314,35 +316,37 @@ if (!function_exists('wafIsPrivateDir')) {
     }
 }
 
-if (!function_exists('wafIsSafeParent')) {
-    /**
-     * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
-     * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
-     * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
-     *
-     * Either way the parent must belong to root or to this process user: the owner of a dir can always
-     * rename or remove what is in it, sticky or not, so a 1777 dir someone else made first (at the
-     * WAF_DATA_DIR path, or as TMPDIR) would let them swap our dir after the check (waf#9 review).
-     * Without posix the owner is not known and only the mode is checked.
-     */
-    function wafIsSafeParent(string $parent): bool
-    {
-        clearstatcache(true, $parent);
-        //$perms = @fileperms($parent);
-        //if ($perms === false) {
-        //    return false;
-        //}
-        $stat = @stat($parent);
-        if ($stat === false) {
-            return false;
-        }
-        if (function_exists('posix_geteuid') && $stat['uid'] !== 0 && $stat['uid'] !== posix_geteuid()) {
-            return false;
-        }
-        $perms = $stat['mode'];
-        return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
-    }
-}
+# wafIsSafeParent() is gone in 1.9.0 (mic 2026-10-12): the data dir's parent is no longer checked, see
+# wafIsPrivateDir(). Kept commented out to show what the 1.8.0 check was.
+//if (!function_exists('wafIsSafeParent')) {
+//    /**
+//     * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
+//     * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
+//     * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
+//     *
+//     * Either way the parent must belong to root or to this process user: the owner of a dir can always
+//     * rename or remove what is in it, sticky or not, so a 1777 dir someone else made first (at the
+//     * WAF_DATA_DIR path, or as TMPDIR) would let them swap our dir after the check (waf#9 review).
+//     * Without posix the owner is not known and only the mode is checked.
+//     */
+//    function wafIsSafeParent(string $parent): bool
+//    {
+//        clearstatcache(true, $parent);
+//        //$perms = @fileperms($parent);
+//        //if ($perms === false) {
+//        //    return false;
+//        //}
+//        $stat = @stat($parent);
+//        if ($stat === false) {
+//            return false;
+//        }
+//        if (function_exists('posix_geteuid') && $stat['uid'] !== 0 && $stat['uid'] !== posix_geteuid()) {
+//            return false;
+//        }
+//        $perms = $stat['mode'];
+//        return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
+//    }
+//}
 
 if (!function_exists('wafDataFileStat')) {
     /**
