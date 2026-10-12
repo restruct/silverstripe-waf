@@ -109,27 +109,45 @@ real process environment), so they always agree on where to find the files.
 ### Where the early filter keeps its files
 
 The ban files, violation counters and `config.json` live in a directory named `waf-<uid>-<hash>` (one
-per process user and module install) that only the PHP process user can use. Its parent is:
+per process user and module install) that only the PHP process user can use. Since 1.9.0 its parent is
+picked in the order Silverstripe picks its own temp folder (`TEMP_PATH`), so the WAF's files sit where the
+site's other caches do. The first that applies wins:
 
-- `WAF_DATA_DIR`, when set: an absolute path, for example a directory inside the project. The WAF makes
-  its own `waf-<uid>-<hash>` directory inside it and never changes or cleans `WAF_DATA_DIR` itself, so it
-  can be a directory that also holds other things; a dedicated one is still the tidier choice. It must
-  be a **real environment variable** (web server or PHP-FPM pool config, e.g.
-  `env[WAF_DATA_DIR] = ...`), not a line in `.env`: the early filter runs before Silverstripe loads
-  `.env`. A value only in `.env` is ignored by both layers, and the middleware logs a warning saying so.
-- Otherwise the system temp directory.
+1. **`WAF_DATA_DIR`**, when set: an absolute path, for example a directory inside the project. The WAF
+   makes its own `waf-<uid>-<hash>` directory inside it and never changes or cleans `WAF_DATA_DIR` itself,
+   so it can be a directory that also holds other things; a dedicated one is still the tidier choice.
+2. **`SS_TEMP_PATH`**, the framework's own setting for its temp folder. A relative value is taken under
+   the project root, as the framework does. The WAF's directory goes inside it, next to the framework's
+   caches.
+3. **`<project>/silverstripe-cache`**, when it exists, the framework's first choice when `SS_TEMP_PATH`
+   is not set. Its mode does not matter (the framework makes it `0777` itself); the WAF only also needs
+   to be able to write to it, and goes on to step 4 when it cannot (for example a directory made by a
+   deploy user that the web server user cannot write to), where the framework would fail instead.
+4. Otherwise the **system temp directory**, as in 1.8.0.
+
+Both settings must be **real environment variables** (web server or PHP-FPM pool config, e.g.
+`env[WAF_DATA_DIR] = ...`), not lines in `.env`: the early filter runs before Silverstripe loads `.env`.
+`SS_TEMP_PATH` counts from the process environment and from server variables (a `fastcgi_param`), the
+places the framework reads besides `.env`; `WAF_DATA_DIR` from the process environment. A value only in
+`.env` is ignored by both layers so that they agree on the directory, and the middleware logs a warning
+saying so. For `SS_TEMP_PATH` that means the framework's caches move and the WAF's files do not.
+
+The project root is worked out from where the module is installed (`<project>/vendor/restruct/silverstripe-waf`),
+because the early filter runs before Composer's autoloader. A module that is not under a `vendor`
+directory, such as a path repository symlinked in for local development, has no project root to go on:
+a relative `SS_TEMP_PATH` and `silverstripe-cache` are then skipped.
 
 The directory is created with mode `0700` and its files with `0600`, written atomically. It is only used
-while all of this holds, checked on one `lstat()` so the answer cannot change halfway:
+while it is a real directory (not a symlink) owned by the process user that nobody else can write to,
+checked on one `lstat()`; one of ours that others can only read is tightened to `0700`. Anything else is
+refused. The parent directory is not checked: it may be writable by others, as the framework's own
+`0777` `silverstripe-cache` and a `0775` deploy-group directory are. (1.8.0 refused such a parent,
+because another local user could swap the WAF's directory in it right after the check. If other local
+users are attacking your site you have bigger problems than a WAF can solve, so 1.9.0 drops that
+requirement.) Only step 3 falls through to the next step; a `WAF_DATA_DIR` or `SS_TEMP_PATH` you set is
+never silently replaced by another location.
 
-- it is a real directory (not a symlink) owned by the process user that nobody else can write to; one of
-  ours that others can only read is tightened to `0700`;
-- its parent belongs to root or the process user, and is not writable by group or others unless it is
-  sticky like `/tmp` (otherwise someone could swap the directory for another right after the check).
-  So a `WAF_DATA_DIR` that is a `0775` directory shared with a deploy group is refused: use a dedicated
-  parent of the web server user with mode `0755` or `0700`.
-
-Anything else is refused. A refused directory means no early bans and the built-in defaults for the
+A refused directory means no early bans and the built-in defaults for the
 early filter (pattern blocking still works), and the middleware logs
 `[WAF] no private data dir for the early filter ...` at most once an hour.
 
@@ -150,6 +168,30 @@ carry over, so on upgrade they start from zero (bans last `ban_duration`, one ho
 On a shared host, setting `WAF_DATA_DIR` to a directory inside your own account is the stronger choice:
 the default name is predictable, so another user can pre-create it. They cannot read or change what
 the WAF keeps there, but the refused directory switches the early ban off until you set `WAF_DATA_DIR`.
+
+**Deploys and lost bans.** Early bans and violation counters are short-lived (`ban_duration`, one hour by
+default), and losing them only means a repeat offender has to be caught again. They are lost whenever the
+directory changes or is emptied:
+
+- The `<hash>` in the name comes from the module's installation path, so on a zero-downtime deploy (each
+  release in its own directory, as Laravel Forge does it) every release starts with an empty data
+  directory, wherever its parent is: bans reset on every deploy anyway, so keeping the files in the
+  release's `silverstripe-cache` loses nothing a shared location would keep. That was already so in 1.8.0.
+- `silverstripe-cache` and a relative `SS_TEMP_PATH` live inside the release, so they are new with each
+  release unless the deploy links them in from a shared location, and they go when old releases are
+  pruned. Deploy scripts that empty `silverstripe-cache` empty the WAF's files with it. Neither breaks
+  anything: the middleware writes `config.json` again on the next request.
+- A flush (`?flush=1`, `dev/build flush=1`, `sake db:build --flush`) does not touch the WAF's directory:
+  the framework clears its own cache folders and leaves other directories in its temp folder alone
+  (checked with `SS_TEMP_PATH` on Silverstripe 5.4 and 6.2).
+
+**Upgrading from 1.8.0.** Nothing moves unless `SS_TEMP_PATH` is set in the real environment or the
+project has a `silverstripe-cache` directory; other sites keep using the system temp directory. Where it does
+move, the early filter starts from an empty directory and the middleware writes a new `config.json` on the
+first request it handles; bans and counters in the old directory are not carried over and expire on their
+own. Until that first `config.json` exists the filter runs on its defaults, as after any deploy (see
+"Running behind a proxy or CDN" in the README). The old 1.8.0 directory in the system temp directory is private (`0700`)
+and no longer read; you can delete it.
 
 ## Pattern Philosophy
 

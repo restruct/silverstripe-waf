@@ -51,6 +51,8 @@ $config = [
 // Since waf#9 only a dir private to this process user (0700, ours, not a symlink): the old 0755 dir in
 // the shared temp dir let anyone on the host read these files or plant their own. WAF_DATA_DIR (real
 // env var) moves it. Null when it does not exist yet or is not private: then nothing is read from it.
+// Since 1.9.0 the parent follows the framework's temp folder order (WAF_DATA_DIR, SS_TEMP_PATH, the
+// project's silverstripe-cache, the system temp dir): see wafEarlyDataDirParent().
 require_once __DIR__ . '/_waf_datadir.php';
 $wafDataDir = wafEarlyDataDir(__DIR__, false);
 

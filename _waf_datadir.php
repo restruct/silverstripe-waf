@@ -19,12 +19,19 @@
  *   - sys_get_temp_dir()/waf-<uid>-<hash>: per process user, so a CLI user and the web user do not
  *     fight over one dir.
  *   WAF_DATA_DIR names the parent: the WAF only ever changes or cleans the dir it named itself.
+ * Since 1.9.0 the parent follows the order in which the framework picks its own temp folder (TEMP_PATH,
+ * constants.php and TempFolder::getTempParentFolder()), so there is one rule for where a site keeps its
+ * caches: WAF_DATA_DIR, else SS_TEMP_PATH (real env; relative = under the project root), else the
+ * project's silverstripe-cache/ when it exists and we can write to it, whatever its mode, else the system
+ * temp dir. See wafEarlyDataDirParent() for each step and where it differs from the framework.
  * Either way the dir is only used while it is private: a real dir (not a symlink), owned by this
  * process user, mode 0700. A dir of ours that others can only read is tightened to 0700; one that
  * others can write to is refused, because its contents may be anyone's. Refused means the early ban is
  * off and the filter uses its defaults (pattern blocking is unaffected); the middleware logs why.
- * The checks run on one lstat() and only in a parent others cannot write to unless it is sticky, so
- * the dir checked is the dir used. Inside it only regular files of this user are believed.
+ * The checks run on one lstat(). Inside the dir only regular files of this user are believed.
+ * The parent dir is not checked (1.8.0 required one that only root or this user could rename in, i.e.
+ * not writable by others unless sticky): mic 2026-10-12, a local user who can swap dirs in the parent
+ * is a bigger problem than a WAF can solve, and the framework itself runs its caches from a 0777 parent.
  * Files are written 0600 through a temp file and rename(), so a reader never sees half a file.
  *
  * Someone who pre-creates the default path (it is predictable) can make it refused, i.e. switch the
@@ -41,9 +48,10 @@
 if (!function_exists('wafEarlyDataDirPath')) {
     /**
      * The data dir path this process would use, whether or not it exists or is safe: a dir named
-     * waf-<uid>-<hash> (see wafEarlyDataDirName()) inside WAF_DATA_DIR when that is set, else inside the
-     * system temp dir. Null when WAF_DATA_DIR is set but not absolute: a relative path would depend on the
-     * cwd, which differs between the filter and the middleware.
+     * waf-<uid>-<hash> (see wafEarlyDataDirName()) inside the parent wafEarlyDataDirParent() picks:
+     * WAF_DATA_DIR, SS_TEMP_PATH, the project's silverstripe-cache or the system temp dir (1.8.0: WAF_DATA_DIR
+     * when set, else the system temp dir). Null when WAF_DATA_DIR is set but not absolute: a relative path
+     * would depend on the cwd, which differs between the filter and the middleware.
      *
      * WAF_DATA_DIR is the parent, never the data dir itself (waf#9 review): it may be a dir that holds other
      * things (the project root, a shared data dir), and the WAF tightens the mode of its data dir and
@@ -53,17 +61,130 @@ if (!function_exists('wafEarlyDataDirPath')) {
      */
     function wafEarlyDataDirPath(string $moduleDir): ?string
     {
-        $base = sys_get_temp_dir();
+        //$base = sys_get_temp_dir();
+        //$configured = trim((string) getenv('WAF_DATA_DIR'));
+        //if ($configured !== '') {
+        //    # Absolute on POSIX, or a Windows drive / UNC path
+        //    if (!preg_match('#^(/|[A-Za-z]:[\\\\/]|\\\\\\\\)#', $configured)) {
+        //        return null;
+        //    }
+        //    $base = $configured;
+        //}
+        # The parent now follows the framework's temp folder order (1.9.0): see wafEarlyDataDirParent()
+        $parent = wafEarlyDataDirParent($moduleDir);
+        if ($parent === null) {
+            return null;
+        }
+        $base = $parent['path'];
+
+        return (rtrim($base, '/\\') ?: $base) . DIRECTORY_SEPARATOR . wafEarlyDataDirName($moduleDir);
+    }
+}
+
+if (!function_exists('wafEarlyDataDirParent')) {
+    /**
+     * Where the data dir goes, as ['source' => ..., 'path' => parent dir], in the order the framework picks
+     * its own temp folder (constants.php for SS_TEMP_PATH, then TempFolder::getTempParentFolder(); same on
+     * Silverstripe 5 and 6), so a site has one rule for where its caches live:
+     *
+     *  1. WAF_DATA_DIR (real env var, absolute path), as in 1.8.0. Null when it is set but not absolute: a
+     *     relative path would depend on the cwd, which differs between the filter and the middleware.
+     *  2. SS_TEMP_PATH, the framework's own override of TEMP_PATH, from the real environment only. A relative
+     *     value is under the project root, as the framework resolves it (relative = not starting with
+     *     DIRECTORY_SEPARATOR, its own test). Relative with no known project root: skipped.
+     *  3. <project root>/silverstripe-cache when it exists, the framework's first choice, whatever its mode
+     *     (the framework chmods it to 0777 on every boot whose mode is not 0777: getTempParentFolder() on 5
+     *     and 6). Where the framework only asks file_exists(), this also asks that it is a dir this process
+     *     can write to; one that is not (e.g. made by a deploy user, not writable for the web user) falls
+     *     through to step 4 rather than switching the early ban off. 1.9.0-dev only took a sticky (1777)
+     *     one; dropped by mic 2026-10-12, see the file header.
+     *  4. The system temp dir, as in 1.8.0.
+     *
+     * Steps 2 and 3 are not in the framework's per-user subfolder (TEMP_PATH itself, <parent>/<user>[-php]):
+     * that one is a plain mkdir() that anyone who can write to the parent may create first, so the WAF keeps
+     * its own waf-<uid>-<hash> dir next to it, with its own checks.
+     *
+     * Only what the early filter can see counts, because both layers must agree on the dir: the real process
+     * environment, never .env (Silverstripe keeps that in Environment's own store, loaded after the filter
+     * has run), and the project root as worked out from the module's own path (wafProjectRoot()).
+     */
+    function wafEarlyDataDirParent(string $moduleDir): ?array
+    {
         $configured = trim((string) getenv('WAF_DATA_DIR'));
         if ($configured !== '') {
             # Absolute on POSIX, or a Windows drive / UNC path
             if (!preg_match('#^(/|[A-Za-z]:[\\\\/]|\\\\\\\\)#', $configured)) {
                 return null;
             }
-            $base = $configured;
+            return ['source' => 'WAF_DATA_DIR', 'path' => $configured];
         }
 
-        return (rtrim($base, '/\\') ?: $base) . DIRECTORY_SEPARATOR . wafEarlyDataDirName($moduleDir);
+        $projectRoot = wafProjectRoot($moduleDir);
+
+        # The framework: if ($path = Environment::getEnv('SS_TEMP_PATH')), so '' and '0' do not count, and the
+        # value is used as it is (not trimmed)
+        $tempPath = (string) wafRealEnv('SS_TEMP_PATH');
+        if ($tempPath !== '' && $tempPath !== '0') {
+            if (ltrim($tempPath, DIRECTORY_SEPARATOR) !== $tempPath) {
+                return ['source' => 'SS_TEMP_PATH', 'path' => $tempPath];
+            }
+            if ($projectRoot !== null) {
+                return ['source' => 'SS_TEMP_PATH', 'path' => $projectRoot . DIRECTORY_SEPARATOR . $tempPath];
+            }
+        }
+
+        if ($projectRoot !== null) {
+            $cacheDir = $projectRoot . DIRECTORY_SEPARATOR . 'silverstripe-cache';
+            clearstatcache(true, $cacheDir);
+            # is_dir() follows a symlink, like the framework's file_exists(): a silverstripe-cache linked in
+            # from a shared dir is the one it uses. Windows has no POSIX modes (see wafIsPrivateDir())
+            //if (@is_dir($cacheDir) && (DIRECTORY_SEPARATOR === '\\' || wafIsSafeParent($cacheDir))) {
+            # Any mode (mic 2026-10-12); is_writable() so one we cannot use falls through to the system temp dir
+            if (@is_dir($cacheDir) && @is_writable($cacheDir)) {
+                return ['source' => 'silverstripe-cache', 'path' => $cacheDir];
+            }
+        }
+
+        return ['source' => 'system temp dir', 'path' => sys_get_temp_dir()];
+    }
+}
+
+if (!function_exists('wafProjectRoot')) {
+    /**
+     * The project root, from the module's own path: the dir that holds vendor/<vendor>/<package>. That is the
+     * framework's BASE_PATH for a Composer install (it takes the dir above vendor/composer/autoload_real.php,
+     * realpath()ed; PHP's __DIR__ is a realpath too). The early filter runs before the autoloader and has
+     * nothing else to go on, and the middleware uses this too (not BASE_PATH) so both layers agree.
+     *
+     * Null when the module is not under a vendor dir, e.g. a path repository symlinked in for local
+     * development (__DIR__ is then the symlink's target): steps 2 (relative) and 3 of wafEarlyDataDirParent()
+     * are skipped there.
+     */
+    function wafProjectRoot(string $moduleDir): ?string
+    {
+        if (!preg_match('#^(?<base>.*)[/\\\\]vendor[/\\\\][^/\\\\]+[/\\\\][^/\\\\]+$#D', rtrim($moduleDir, '/\\'), $matches)) {
+            return null;
+        }
+        # Installed at /vendor/... (a chroot): the root is /, as the framework's own fallback has it
+        return $matches['base'] !== '' ? $matches['base'] : DIRECTORY_SEPARATOR;
+    }
+}
+
+if (!function_exists('wafRealEnv')) {
+    /**
+     * An environment variable as Environment::getEnv() finds it, minus its own store (.env and setEnv()),
+     * which the early filter cannot see: $_ENV, then $_SERVER (where a web server's fastcgi_param ends up),
+     * then getenv(). False when it is in none of them.
+     */
+    function wafRealEnv(string $name)
+    {
+        if (isset($_ENV[$name])) {
+            return $_ENV[$name];
+        }
+        if (isset($_SERVER[$name])) {
+            return $_SERVER[$name];
+        }
+        return getenv($name);
     }
 }
 
@@ -140,11 +261,11 @@ if (!function_exists('wafIsPrivateDir')) {
      * Whether $dir is a real dir that only this process user can use, tightening our own dir to 0700 when
      * others can at most read it.
      *
-     * Everything is decided on ONE lstat() of the path (waf#9 review): is_link() followed by is_dir(),
-     * fileowner() and fileperms() is two syscalls, and whoever owns the entry can swap a real dir for a
-     * symlink in between, so the type was checked on one thing and the owner and mode on another. That
-     * single answer only stays true while nobody else can rename the entry, so the parent must not be
-     * writable by others unless it is sticky (like /tmp, where only an entry's owner may rename it).
+     * Everything is decided on ONE lstat() of the path (waf#9 review): type, owner and mode all describe the
+     * same entry. The parent is not checked since 1.9.0 (mic 2026-10-12): 1.8.0 also required a parent that
+     * nobody else could rename entries in (not writable by others unless sticky, owned by root or us), which
+     * only guarded against another local user swapping the dir right after the check, and kept the WAF out
+     * of the framework's own 0777 silverstripe-cache.
      */
     function wafIsPrivateDir(string $dir): bool
     {
@@ -164,9 +285,10 @@ if (!function_exists('wafIsPrivateDir')) {
         if (DIRECTORY_SEPARATOR === '\\') {
             return is_writable($dir);
         }
-        if (!wafIsSafeParent(dirname($dir))) {
-            return false;
-        }
+        # Parent check dropped in 1.9.0 (mic 2026-10-12), see the docblock
+        //if (!wafIsSafeParent(dirname($dir))) {
+        //    return false;
+        //}
         //if (function_exists('posix_geteuid') && @fileowner($dir) !== posix_geteuid()) {
         if (function_exists('posix_geteuid') && $stat['uid'] !== posix_geteuid()) {
             return false;
@@ -181,9 +303,7 @@ if (!function_exists('wafIsPrivateDir')) {
             return false;
         }
         # Readable or searchable by others (e.g. a 0755 dir made with a default umask): ours, so tighten it.
-        # chmod() only succeeds for the owner, which also covers a host without posix. It follows a
-        # symlink, but the entry is a dir of ours in a parent where nobody else can rename it (checked
-        # above), so it is still the dir lstat() saw.
+        # chmod() only succeeds for the owner, which also covers a host without posix.
         if (($perms & 0077) !== 0) {
             if (!@chmod($dir, 0700)) {
                 return false;
@@ -196,35 +316,37 @@ if (!function_exists('wafIsPrivateDir')) {
     }
 }
 
-if (!function_exists('wafIsSafeParent')) {
-    /**
-     * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
-     * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
-     * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
-     *
-     * Either way the parent must belong to root or to this process user: the owner of a dir can always
-     * rename or remove what is in it, sticky or not, so a 1777 dir someone else made first (at the
-     * WAF_DATA_DIR path, or as TMPDIR) would let them swap our dir after the check (waf#9 review).
-     * Without posix the owner is not known and only the mode is checked.
-     */
-    function wafIsSafeParent(string $parent): bool
-    {
-        clearstatcache(true, $parent);
-        //$perms = @fileperms($parent);
-        //if ($perms === false) {
-        //    return false;
-        //}
-        $stat = @stat($parent);
-        if ($stat === false) {
-            return false;
-        }
-        if (function_exists('posix_geteuid') && $stat['uid'] !== 0 && $stat['uid'] !== posix_geteuid()) {
-            return false;
-        }
-        $perms = $stat['mode'];
-        return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
-    }
-}
+# wafIsSafeParent() is gone in 1.9.0 (mic 2026-10-12): the data dir's parent is no longer checked, see
+# wafIsPrivateDir(). Kept commented out to show what the 1.8.0 check was.
+//if (!function_exists('wafIsSafeParent')) {
+//    /**
+//     * Whether entries in $parent can only be renamed or replaced by their owner: $parent is not writable by
+//     * group or others, or it is sticky (mode +t, like /tmp). stat(), not lstat(): the parent itself may be
+//     * reached through a symlink the admin chose (on macOS /tmp and /var are symlinks into /private).
+//     *
+//     * Either way the parent must belong to root or to this process user: the owner of a dir can always
+//     * rename or remove what is in it, sticky or not, so a 1777 dir someone else made first (at the
+//     * WAF_DATA_DIR path, or as TMPDIR) would let them swap our dir after the check (waf#9 review).
+//     * Without posix the owner is not known and only the mode is checked.
+//     */
+//    function wafIsSafeParent(string $parent): bool
+//    {
+//        clearstatcache(true, $parent);
+//        //$perms = @fileperms($parent);
+//        //if ($perms === false) {
+//        //    return false;
+//        //}
+//        $stat = @stat($parent);
+//        if ($stat === false) {
+//            return false;
+//        }
+//        if (function_exists('posix_geteuid') && $stat['uid'] !== 0 && $stat['uid'] !== posix_geteuid()) {
+//            return false;
+//        }
+//        $perms = $stat['mode'];
+//        return ($perms & 0022) === 0 || ($perms & 01000) !== 0;
+//    }
+//}
 
 if (!function_exists('wafDataFileStat')) {
     /**

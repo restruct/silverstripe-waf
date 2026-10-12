@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.9.0 (2026-10-12)
+
+### Changed
+
+- **The early filter's data directory follows the framework's temp folder order.** 1.8.0 used
+  `WAF_DATA_DIR`, else the system temp directory. The parent of the `waf-<uid>-<hash>` directory is now
+  picked the way Silverstripe picks its own temp folder (`TEMP_PATH`, same on 5 and 6), so a site's caches
+  and the WAF's files follow one rule: `WAF_DATA_DIR`; else `SS_TEMP_PATH` (relative to the project root,
+  as the framework resolves it); else `<project>/silverstripe-cache` when it exists, whatever its mode, as
+  long as the PHP user can write to it (one it cannot write to falls through); else the system temp
+  directory. The `waf-<uid>-<hash>` directory itself stays private as in 1.8.0 (`0700`, of the PHP user,
+  not a symlink, `0600` files, only the PHP user's regular files believed). Like `WAF_DATA_DIR`,
+  `SS_TEMP_PATH` only counts from the real environment (process environment or a server variable such
+  as `fastcgi_param`), never from `.env`, which is loaded after the early filter has run; with
+  `SS_TEMP_PATH` only in `.env` the middleware logs a warning that the WAF's files do not follow it. The
+  project root comes from the module's install path (`<project>/vendor/...`); a module symlinked in from
+  elsewhere skips the project-relative steps. Where the directory moves on upgrade, early bans and
+  counters start from zero (as they do on every zero-downtime deploy, since the hash is the module's
+  install path). See docs/early-filter.md, "Where the early filter keeps its files", and UPGRADING.md.
+  Covered by `EarlyFilterDataDirOrderTest` on Silverstripe 5 and 6.
+- **The data directory's parent is no longer checked** (mic, 2026-10-12). 1.8.0 refused a parent that
+  group or others could write to unless it was sticky, or that belonged to someone other than root or the
+  PHP user; that only guarded against another local user swapping the WAF's directory right after the
+  check, and kept the WAF out of the framework's own `0777` `silverstripe-cache`. A `WAF_DATA_DIR` or
+  `SS_TEMP_PATH` that is a `0775` deploy-group directory is now used instead of switching the early ban
+  off. `wafIsSafeParent()` is gone.
+
 ## 1.8.1 (2026-10-12)
 
 ### Added
