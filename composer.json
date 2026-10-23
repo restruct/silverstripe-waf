@@ -14,7 +14,8 @@
     "authors": [
         {
             "name": "Restruct",
-            "email": "dev@restruct.nl"
+            "email": "dev@restruct.nl",
+            "homepage": "https://restruct.nl"
         }
     ],
     "require": {
