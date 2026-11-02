@@ -114,10 +114,15 @@ site that takes such files, leave the probe check off.
 `upload_burst_window` seconds; each one past `upload_burst_limit` in the window counts as a violation and
 is logged (`[WAF] VIOLATION reason=upload_burst ...`). The request itself is not blocked: a burst is a
 signal, not proof, and the ban follows from `ban_threshold`. The counter is a per-IP file (`upl_<md5>`)
-in the early filter's data directory, next to the violation counters. Mind CMS editors: dropping many
-files on an `UploadField` at once sends one POST per file, so with the defaults an editor who uploads
-twenty images within ten seconds collects fifteen violations and is banned. Enable the burst check only where
-editors work from whitelisted IPs (`WAF_WHITELIST_IPS`) or upload few files at a time, or raise the limit.
+in the early filter's data directory, next to the violation counters.
+
+The CMS admin is left out of the burst count: dropping many files on an `UploadField` in the CMS sends
+one POST per file, and editors doing that are not probes. The admin route is the one the framework uses
+(the `Director` rule for `AdminRootController`, else its `url_base`, `admin` by default), which the
+middleware passes on in `config.json`; until that file exists the early filter assumes `/admin`. The
+upload probe check still applies to admin URLs. Front-end upload fields (userforms, a public
+`UploadField`) do count, so a visitor who drops more than `upload_burst_limit` files within the window on
+one of those collects violations: raise the limit on such sites.
 
 ## Early Filter Banning
 

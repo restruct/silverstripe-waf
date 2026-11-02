@@ -7,6 +7,7 @@ use Psr\SimpleCache\CacheInterface;
 use Restruct\SilverStripe\Waf\Models\PrivilegedIp;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
+use SilverStripe\Admin\AdminRootController;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\Middleware\HTTPMiddleware;
@@ -821,6 +822,9 @@ class WafMiddleware implements HTTPMiddleware
             'upload_burst_enabled' => (bool) $this->config()->get('upload_burst_enabled'),
             'upload_burst_limit' => (int) $this->config()->get('upload_burst_limit'),
             'upload_burst_window' => (int) $this->config()->get('upload_burst_window'),
+            # The CMS admin route as the framework routes it (Director rules, else AdminRootController.url_base),
+            # which the upload burst count leaves out; the filter cannot work it out before the framework loads
+            'admin_path' => '/' . trim((string) AdminRootController::get_admin_route(), '/'),
         ];
 
         //@file_put_contents($configFile, json_encode($config));

@@ -137,8 +137,9 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   #
   # upload_burst_enabled: each multipart POST past upload_burst_limit within
   # upload_burst_window seconds from one IP counts as a violation (not blocked
-  # itself). Mind CMS editors who drop many files on an UploadField at once: one
-  # POST per file. Toggle via WAF_UPLOAD_BURST env var (true/false).
+  # itself). CMS admin URLs (the AdminRootController route) are not counted:
+  # editors bulk-uploading send one POST per file. The probe check still applies
+  # there. Toggle via WAF_UPLOAD_BURST env var (true/false).
   #upload_probe_enabled: true
   #upload_burst_enabled: true
   #upload_burst_limit: 5          # Multipart POSTs allowed per window

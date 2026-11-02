@@ -61,6 +61,10 @@ $earlyBanConfig = ['enabled' => true, 'threshold' => 10, 'duration' => 3600];
 # Upload checks (waf#15), both opt-in: off until the middleware has written them on in config.json, or
 # the env var below switches them on. Defaults match the YAML defaults on WafMiddleware.
 $earlyUploadConfig = ['probe' => false, 'burst' => false, 'burst_limit' => 5, 'burst_window' => 10];
+# The CMS admin route, left out of the upload burst count (mic, PR #16): an editor dropping many files on
+# an UploadField sends one POST per file. The middleware passes the real route on (AdminRootController);
+# until it has, the framework default.
+$earlyUploadConfig['admin_path'] = '/admin';
 //$wafConfigFile = $wafDataDir !== null ? $wafDataDir . '/config.json' : null;
 //if ($wafConfigFile !== null && file_exists($wafConfigFile)) {
 //    $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
@@ -78,6 +82,7 @@ if ($wafConfigJson !== null) {
         $earlyUploadConfig['burst'] = (bool) ($loadedConfig['upload_burst_enabled'] ?? false);
         $earlyUploadConfig['burst_limit'] = (int) ($loadedConfig['upload_burst_limit'] ?? 5);
         $earlyUploadConfig['burst_window'] = (int) ($loadedConfig['upload_burst_window'] ?? 10);
+        $earlyUploadConfig['admin_path'] = (string) ($loadedConfig['admin_path'] ?? '/admin');
     }
 }
 
@@ -187,8 +192,11 @@ if (($earlyUploadConfig['probe'] || $earlyUploadConfig['burst'])
     && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
     && stripos(ltrim((string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '')), 'multipart/form-data') === 0
 ) {
-    # Upload burst first, so a probe that is blocked below still counts towards the burst
-    if ($earlyUploadConfig['burst'] && $earlyUploadConfig['burst_limit'] > 0 && $earlyUploadConfig['burst_window'] > 0) {
+    # Upload burst first, so a probe that is blocked below still counts towards the burst. CMS admin URLs
+    # are not counted (bulk uploads by editors); the probe check below still applies to them.
+    if ($earlyUploadConfig['burst'] && $earlyUploadConfig['burst_limit'] > 0 && $earlyUploadConfig['burst_window'] > 0
+        && !wafIsAdminPath($uriPath, $earlyUploadConfig['admin_path'])
+    ) {
         wafTrackUploadBurst($ip, $uri, $userAgent);
     }
     if ($earlyUploadConfig['probe'] && !empty($_FILES)) {
@@ -426,6 +434,21 @@ function wafTrackViolation(string $ip): void
     if (mt_rand(1, 100) === 1) {
         wafCleanupExpired($wafDataDir, $earlyBanConfig['duration']);
     }
+}
+
+/**
+ * Whether $path is the CMS admin route $adminPath or below it (/admin, /admin/assets/...), but not a longer
+ * word (/administrator). Case-insensitive. An empty or root admin path matches nothing, so a broken value
+ * never exempts the whole site from the upload burst count.
+ */
+function wafIsAdminPath(string $path, string $adminPath): bool
+{
+    $adminPath = strtolower('/' . trim($adminPath, '/'));
+    if ($adminPath === '/') {
+        return false;
+    }
+    $path = strtolower($path);
+    return $path === $adminPath || str_starts_with($path, $adminPath . '/');
 }
 
 /**

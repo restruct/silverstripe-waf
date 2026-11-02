@@ -4,6 +4,8 @@ namespace Restruct\SilverStripe\Waf\Tests;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use Restruct\SilverStripe\Waf\Middleware\WafMiddleware;
+use SilverStripe\Admin\AdminRootController;
+use SilverStripe\Control\Director;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 
@@ -162,10 +164,11 @@ class EarlyFilterUploadTest extends SapphireTest
         array $files,
         array $env = [],
         string $method = 'POST',
-        string $contentType = 'multipart/form-data; boundary=----waf15'
+        string $contentType = 'multipart/form-data; boundary=----waf15',
+        string $path = '/Security/login/default/LoginForm'
     ): array {
         $server = [
-            'REMOTE_ADDR' => self::CLIENT, 'REQUEST_URI' => '/Security/login/default/LoginForm',
+            'REMOTE_ADDR' => self::CLIENT, 'REQUEST_URI' => $path,
             'HTTP_USER_AGENT' => self::UA, 'REQUEST_METHOD' => $method, 'CONTENT_TYPE' => $contentType,
         ];
         $env = [
@@ -519,6 +522,63 @@ class EarlyFilterUploadTest extends SapphireTest
     }
 
     /**
+     * CMS admin URLs are left out of the burst count (mic, PR #16: editors bulk-upload one POST per file),
+     * at the framework's default /admin until the middleware has passed the real route on. The same POSTs
+     * to a public URL do count (the must-fail control), and so does a longer word like /administrator.
+     */
+    public function testUploadBurstLeavesTheCmsAdminOut(): void
+    {
+        $this->writeFilterConfig(['upload_burst_enabled' => true, 'upload_burst_limit' => 2, 'upload_burst_window' => 60]);
+        $files = $this->filesFor('photo.jpg', self::jpegBytes());
+        $post = fn(string $path) => $this->runFilter($files, [], 'POST', 'multipart/form-data; boundary=x', $path)['result'];
+
+        foreach (['/admin/assets/api/createFile', '/admin', '/ADMIN/assets/api/createFile', '/admin/pages/edit/EditForm/1/field/Image/upload'] as $path) {
+            $this->assertSame('PASSED', $post($path));
+        }
+        $this->assertFileDoesNotExist($this->dataDir() . '/upl_' . md5(self::CLIENT), 'admin uploads are not counted');
+        $this->assertFalse($this->hasViolation());
+
+        foreach (['/administrator/upload', '/administrator/upload', '/administrator/upload'] as $path) {
+            $post($path);
+        }
+        $this->assertTrue($this->hasViolation(), 'a public URL (here /administrator) past the limit counts');
+    }
+
+    /**
+     * The admin route the middleware writes (a site that routes the CMS elsewhere) replaces /admin.
+     */
+    public function testUploadBurstFollowsTheAdminRouteFromTheConfigFile(): void
+    {
+        $this->writeFilterConfig([
+            'upload_burst_enabled' => true, 'upload_burst_limit' => 2, 'upload_burst_window' => 60, 'admin_path' => '/beheer',
+        ]);
+        $files = $this->filesFor('photo.jpg', self::jpegBytes());
+        $post = fn(string $path) => $this->runFilter($files, [], 'POST', 'multipart/form-data; boundary=x', $path)['result'];
+
+        for ($i = 0; $i < 4; $i++) {
+            $post('/beheer/assets/api/createFile');
+        }
+        $this->assertFalse($this->hasViolation(), 'the configured route is left out');
+
+        for ($i = 0; $i < 3; $i++) {
+            $post('/admin/assets/api/createFile');
+        }
+        $this->assertTrue($this->hasViolation(), '/admin is an ordinary URL on this site and counts');
+    }
+
+    /**
+     * The probe check is not relaxed for the admin: a webshell upload there is blocked like anywhere else.
+     */
+    public function testProbeCheckStillAppliesToTheCmsAdmin(): void
+    {
+        $this->writeFilterConfig(['upload_probe_enabled' => true, 'upload_burst_enabled' => true]);
+        $this->assertSame(
+            'FORBIDDEN',
+            $this->runFilter($this->filesFor('x.php.jpg', self::jpegBytes()), [], 'POST', 'multipart/form-data; boundary=x', '/admin/assets/api/createFile')['result']
+        );
+    }
+
+    /**
      * Housekeeping treats the counter as one of the filter's own files (and nothing like it as one).
      */
     public function testUploadCounterIsAFilterDataFile(): void
@@ -545,7 +605,7 @@ class EarlyFilterUploadTest extends SapphireTest
             $method->invoke(WafMiddleware::create());
             return array_intersect_key(
                 (array) json_decode((string) @file_get_contents($configFile), true),
-                array_flip(['upload_probe_enabled', 'upload_burst_enabled', 'upload_burst_limit', 'upload_burst_window'])
+                array_flip(['upload_probe_enabled', 'upload_burst_enabled', 'upload_burst_limit', 'upload_burst_window', 'admin_path'])
             );
         };
         try {
@@ -554,6 +614,8 @@ class EarlyFilterUploadTest extends SapphireTest
             Config::modify()->set(WafMiddleware::class, 'upload_burst_enabled', true);
             Config::modify()->set(WafMiddleware::class, 'upload_burst_limit', 8);
             Config::modify()->set(WafMiddleware::class, 'upload_burst_window', 4);
+            # The CMS routed elsewhere: get_admin_route() reads the Director rule first
+            Config::modify()->set(Director::class, 'rules', ['beheer' => AdminRootController::class]);
             $set = $write();
         } finally {
             @unlink($configFile);
@@ -561,11 +623,11 @@ class EarlyFilterUploadTest extends SapphireTest
         }
 
         $this->assertSame(
-            ['upload_probe_enabled' => false, 'upload_burst_enabled' => false, 'upload_burst_limit' => 5, 'upload_burst_window' => 10],
+            ['upload_probe_enabled' => false, 'upload_burst_enabled' => false, 'upload_burst_limit' => 5, 'upload_burst_window' => 10, 'admin_path' => '/admin'],
             $defaults
         );
         $this->assertSame(
-            ['upload_probe_enabled' => true, 'upload_burst_enabled' => true, 'upload_burst_limit' => 8, 'upload_burst_window' => 4],
+            ['upload_probe_enabled' => true, 'upload_burst_enabled' => true, 'upload_burst_limit' => 8, 'upload_burst_window' => 4, 'admin_path' => '/beheer'],
             $set
         );
     }
