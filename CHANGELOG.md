@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.10.0 (unreleased)
+## 1.10.0 (2026-11-02)
 
 ### Added
 
@@ -18,7 +18,9 @@
 - **Optional upload-burst counter** (waf#15, opt-in). With `upload_burst_enabled: true`, each multipart
   POST from one IP past `upload_burst_limit` (default 5) within `upload_burst_window` seconds (default
   10) counts as a violation and is logged as `[WAF] VIOLATION reason=upload_burst`; the request itself
-  is not blocked. The counter is a per-IP `upl_<md5>` file in the early filter's data directory, which
+  is not blocked. CMS admin URLs (the framework's `AdminRootController` route, passed on by the middleware,
+  `/admin` until it has) are left out of the count, since editors bulk-upload one POST per file; the probe
+  check still applies there. The counter is a per-IP `upl_<md5>` file in the early filter's data directory, which
   housekeeping now treats as one of its own files.
 - Both options are YAML on `WafMiddleware`, passed to the early filter in `config.json` like
   `early_ban_enabled` (so a change arrives within the hour), with `WAF_UPLOAD_PROBE` and
