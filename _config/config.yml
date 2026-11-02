@@ -122,6 +122,29 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   early_ban_enabled: true
 
   # ---------------------------------------------------------------------------
+  # Early Filter Upload Checks (waf#15, opt-in)
+  # ---------------------------------------------------------------------------
+  # Catch upload-handler probes: webshell drop attempts through any endpoint that
+  # accepts files. Only multipart/form-data POSTs are looked at, by the early filter
+  # (so it must be included in public/index.php); this class only passes the values
+  # on in the early filter's config.json (rewritten at most hourly).
+  #
+  # upload_probe_enabled: 403 for an uploaded file named *.php, *.phtml, *.phar,
+  # *.php3-8, *.pht, *.phps (anywhere in the name: x.php.jpg), .htaccess or .user.ini,
+  # or whose first 4 KB hold <?php, <?= or <script language="php". Counts as a
+  # violation (ban_threshold). Logs IP, user agent and filename, never the content.
+  # Toggle via WAF_UPLOAD_PROBE env var (true/false).
+  #
+  # upload_burst_enabled: each multipart POST past upload_burst_limit within
+  # upload_burst_window seconds from one IP counts as a violation (not blocked
+  # itself). Mind CMS editors who drop many files on an UploadField at once: one
+  # POST per file. Toggle via WAF_UPLOAD_BURST env var (true/false).
+  #upload_probe_enabled: true
+  #upload_burst_enabled: true
+  #upload_burst_limit: 5          # Multipart POSTs allowed per window
+  #upload_burst_window: 10        # Window in seconds
+
+  # ---------------------------------------------------------------------------
   # Logging
   # ---------------------------------------------------------------------------
   # Logs blocked requests to error_log in fail2ban-compatible format:

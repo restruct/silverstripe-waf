@@ -58,6 +58,67 @@ which this summary may lag. See [Extending](extending.md#custom-blocked-patterns
 **Random PHP file probes:**
 Short PHP filenames matching `/^\/[a-z0-9_]{2,8}\.php$/i` (e.g., `/abc123.php`, `/xyz.php`) are blocked as likely webshell probes. Legitimate files like `/index.php` are whitelisted.
 
+## Upload Checks (opt-in)
+
+Since 1.10.0 (waf#15) the early filter can catch upload-handler probes: a tool that fires multipart POSTs
+at any endpoint that accepts files (a userforms file field, a front-end `UploadField`, the login form)
+to drop a webshell. Silverstripe's own upload validation already rejects disallowed extensions, so such a
+file would not usually land. What the check adds is that the sender is logged with its IP and user agent
+and counts towards the early ban before it moves on to other probes. Both checks are off by default.
+
+```yaml
+Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
+  upload_probe_enabled: true    # Block PHP/server-config uploads (default false)
+  upload_burst_enabled: true    # Count upload bursts as violations (default false)
+  upload_burst_limit: 5         # Multipart POSTs allowed per IP per window
+  upload_burst_window: 10       # Window in seconds
+```
+
+Like `early_ban_enabled`, these reach the early filter through the `config.json` the middleware writes,
+which is rewritten at most once an hour: a change takes effect when it is next written (delete
+`config.json` in the data directory to have it written on the next request). The real environment
+variables `WAF_UPLOAD_PROBE` and `WAF_UPLOAD_BURST` (`true`/`false`) override the YAML values at once.
+
+Only `POST` requests with a `multipart/form-data` content type are looked at. Every other request, and
+every request while both checks are off, costs a few array reads. The checks run after the ban check and
+the path checks, and skip whitelisted IPs like everything else in the early filter.
+
+**Upload probe** (`upload_probe_enabled`). Each uploaded file in `$_FILES` (plain and nested array
+fields) is checked, names first, then content:
+
+- **Name:** an executable extension anywhere after the first dot, case-insensitive: `.php`, `.phtml`,
+  `.phar`, `.php3` to `.php8`, `.pht`, `.phps`. So `x.php.jpg` (the double-extension trick that some
+  Apache handler setups run as PHP), `X.PHP5.png` and `x.php.` (trailing dot) are caught, while `php.jpg`
+  (a JPEG called "php") and `phpinfo-guide.pdf` are not. Also the server-config files `.htaccess` and
+  `.user.ini`.
+- **Content:** the first 4 KB of the uploaded temp file, for `<?php`, `<?=` followed by something that
+  looks like code, and `<script language="php">`, case-insensitive. `<?=` alone is three bytes that turn
+  up by chance in about one in 4000 compressed files (JPEG, PNG, PDF streams), so it only counts when a
+  variable, name, bracket, backtick or quote and a few printable characters follow, as in every real
+  short-tag shell. PHP further into a file is not looked for. SVG files pass unless they contain PHP:
+  scripts in SVG are for [restruct/silverstripe-svg-images](https://github.com/restruct/silverstripe-svg-images)
+  to handle.
+
+A hit is a 403 through the same path as a blocked URL: it counts as a violation, so the sender is banned
+after `ban_threshold` of them, and it is logged with the filename in the pattern field (never the file
+content):
+
+```
+[WAF] BLOCKED reason=upload_probe pattern="content:<?php file=photo.jpg" ip=1.2.3.4 uri="/Security/login" ua="..."
+```
+
+A plain-text upload that starts with PHP code (a code sample attached to a form) is blocked too. On a
+site that takes such files, leave the probe check off.
+
+**Upload burst** (`upload_burst_enabled`). Every multipart POST from one IP is counted in a fixed window of
+`upload_burst_window` seconds; each one past `upload_burst_limit` in the window counts as a violation and
+is logged (`[WAF] VIOLATION reason=upload_burst ...`). The request itself is not blocked: a burst is a
+signal, not proof, and the ban follows from `ban_threshold`. The counter is a per-IP file (`upl_<md5>`)
+in the early filter's data directory, next to the violation counters. Mind CMS editors: dropping many
+files on an `UploadField` at once sends one POST per file, so with the defaults an editor who uploads
+twenty images within ten seconds collects fifteen violations and is banned. Enable the burst check only where
+editors work from whitelisted IPs (`WAF_WHITELIST_IPS`) or upload few files at a time, or raise the limit.
+
 ## Early Filter Banning
 
 When enabled (default), the early filter tracks violations per IP using lightweight files. After a configurable threshold (default: 10 violations), the IP is banned for **all URLs** — not just pattern matches. This stops scanners that fire bursts of probes in seconds, without needing fail2ban or any background job.
@@ -154,7 +215,7 @@ early filter (pattern blocking still works), and the middleware logs
 Inside it, a file is only believed when it is a regular file of the process user: a symlink, or a file
 someone else left there while the directory was open, counts as absent. The middleware rewrites a
 `config.json` that fails that check or has a modification time in the future. The occasional cleanup
-only deletes the WAF's own names (`ban_<md5>`, `viol_<md5>`, and `.tmp-<hex>` left by an interrupted
+only deletes the WAF's own names (`ban_<md5>`, `viol_<md5>`, `upl_<md5>`, and `.tmp-<hex>` left by an interrupted
 write).
 
 Up to 1.7.0 the files were in `<system temp dir>/waf_<hash>`, readable by everyone and trusted as found,
@@ -214,3 +275,5 @@ This module intentionally focuses on **path-based blocking** rather than SQLi/XS
 - Defense in depth at the perimeter
 
 **For payload inspection**, use ModSecurity at the web server level where it's optimized for this purpose.
+The opt-in [upload checks](#upload-checks-opt-in) are the one narrow exception: they look at the names and
+first bytes of uploaded files only, for PHP and nothing else.
