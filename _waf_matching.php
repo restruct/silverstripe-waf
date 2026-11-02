@@ -17,7 +17,7 @@
  *   exact      path === pattern
  *   prefix     path starts with pattern                  (stems like /wp-admin*)
  *   segment    path === pattern OR starts pattern + '/'  (directory-ish names; this is
- *              what stops /plesk matching /pleskens, or /health matching /healthcare)
+ *              what stops /plesk matching /pleskemeijer, or /health matching /healthcare)
  *   suffix     path ends with pattern                    (basename probes like
  *              /vendor/.../eval-stdin.php — leading slash keeps it basename-anchored:
  *              '/config.php' matches /app/config.php but NOT /xconfig.php)
@@ -214,7 +214,7 @@ function wafBlockedPathEntries(): array
         ['pattern' => '/manager/html',   'match' => 'prefix',  'class' => 'server-admin'],
         ['pattern' => '/manager/status', 'match' => 'prefix',  'class' => 'server-admin'],
         ['pattern' => '/plesk',          'match' => 'segment', 'class' => 'server-admin',
-         'note' => 'segment, not substring — /pleskens (surname) is a plausible slug'],
+         'note' => 'segment, not substring — /pleskemeijer (surname) is a plausible slug'],
         ['pattern' => '/server-info',    'match' => 'exact',   'class' => 'server-admin'],
         ['pattern' => '/server-status',  'match' => 'exact',   'class' => 'server-admin'],
         ['pattern' => '/webmin',         'match' => 'segment', 'class' => 'server-admin'],

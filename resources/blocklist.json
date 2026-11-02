@@ -638,7 +638,7 @@
             "pattern": "/plesk",
             "match": "exact",
             "class": "server-admin",
-            "note": "segment, not substring \u2014 /pleskens (surname) is a plausible slug"
+            "note": "segment, not substring \u2014 /pleskemeijer (surname) is a plausible slug"
         },
         {
             "pattern": "/plesk/",
