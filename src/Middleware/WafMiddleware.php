@@ -432,7 +432,7 @@ class WafMiddleware implements HTTPMiddleware
     /**
      * Is this IP a search-engine crawler it claims to be?
      *
-     * UA string alone proves nothing (spoofed constantly — goflex logged one IP
+     * UA string alone proves nothing (spoofed constantly: a client site logged one IP
      * cycling four different bot UAs). The accepted verification is the one the
      * engines themselves document: reverse-DNS the IP, require the hostname to sit
      * under a known parent domain, then FORWARD-resolve that hostname and require
