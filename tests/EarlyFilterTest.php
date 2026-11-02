@@ -48,7 +48,7 @@ class EarlyFilterTest extends TestCase
         $e = [['pattern' => '/plesk', 'match' => 'segment', 'class' => 't']];
         $this->assertNotNull(wafMatchBlockedPath('/plesk', $e));
         $this->assertNotNull(wafMatchBlockedPath('/plesk/login.php', $e));
-        $this->assertNull(wafMatchBlockedPath('/pleskens', $e), 'surname must not match');
+        $this->assertNull(wafMatchBlockedPath('/pleskemeijer', $e), 'surname must not match');
         $this->assertNull(wafMatchBlockedPath('/team/plesk', $e), 'not path-start');
     }
 
@@ -126,11 +126,11 @@ class EarlyFilterTest extends TestCase
         return array_map(fn($u) => [$u], [
             // content vocabulary that used to collide (waf#3/waf#5)
             '/vacatures/healthcare-manager-utrecht',
-            '/vacatures/item/9695/omscholen-tot-monteur',
+            '/vacatures/item/1234/omscholen-tot-monteur',
             '/en/health-and-safety-officer',
             '/metrics-analist-vacature',
             '/vacatures/artisan-bakker-amsterdam',
-            '/team/pleskens',
+            '/team/pleskemeijer',
             '/webminar-aanmelden',
             '/nieuws/database-trends-2026',
             '/console-operator-vacature',
