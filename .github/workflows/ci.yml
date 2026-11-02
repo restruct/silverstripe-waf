@@ -240,4 +240,4 @@ jobs:
           php-version: ${{ matrix.php }}
           coverage: none
       - name: Syntax check every PHP file
-        run: find src tests bin -name '*.php' -print0 | xargs -0 -n1 php -l && php -l _waf_early_filter.php && php -l _waf_matching.php
+        run: find src tests bin -name '*.php' -print0 | xargs -0 -n1 php -l && for f in _waf_*.php; do php -l "$f" || exit 1; done
