@@ -117,7 +117,7 @@ class EarlyFilterTest extends TestCase
 
     // ========================================================================
     // False-positive battery — waf#3/waf#5 regressions. Every entry is a plausible
-    // real URL on SOME Silverstripe site (goflex is a vacancy site, hence the
+    // real URL on SOME Silverstripe site (one consumer is a vacancy site, hence the
     // healthcare/artisan slugs). None may match the shipped inventory.
     // ========================================================================
 
