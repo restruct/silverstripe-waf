@@ -206,13 +206,15 @@ if (!function_exists('wafEarlyDataDirName')) {
 
 if (!function_exists('wafIsDataFileName')) {
     /**
-     * Whether $name is one of the files the filter keeps per address: ban_<md5> or viol_<md5>. Housekeeping
+     * Whether $name is one of the files the filter keeps per address: ban_<md5>, viol_<md5> or (since 1.10.0,
+     * waf#15) the upload-burst counter upl_<md5>. Housekeeping
      * (the filter's cleanup, the middleware's removal of the 1.7.0 dir) only ever deletes these, and the
      * temp files of wafWriteDataFile() (wafIsDataTempFileName()), never anything else it finds.
      */
     function wafIsDataFileName(string $name): bool
     {
-        return preg_match('/^(ban|viol)_[0-9a-f]{32}$/D', $name) === 1;
+        //return preg_match('/^(ban|viol)_[0-9a-f]{32}$/D', $name) === 1;
+        return preg_match('/^(ban|viol|upl)_[0-9a-f]{32}$/D', $name) === 1;
     }
 }
 

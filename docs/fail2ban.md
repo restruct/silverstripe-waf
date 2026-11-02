@@ -10,6 +10,8 @@ The WAF logs in a fail2ban-compatible format, allowing fail2ban to ban offending
 [WAF] BLOCKED reason=blocked_pattern ip=1.2.3.4 uri="/wp-admin/"
 [WAF] BLOCKED reason=rate_limit ip=1.2.3.4 uri="/api/endpoint"
 [WAF] BLOCKED reason=invalid_modelclass ip=1.2.3.4 uri="/admin/pages//wp-includes/..."
+[WAF] BLOCKED reason=upload_probe pattern="ext:php file=x.php.jpg" ip=1.2.3.4 uri="/Security/login" ua="..."
+[WAF] VIOLATION reason=upload_burst ip=1.2.3.4 count=6 window=10 uri="/Security/login" ua="..."
 [WAF] EARLY_BAN ip=1.2.3.4 violations=10 duration=3600
 ```
 

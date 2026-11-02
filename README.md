@@ -10,6 +10,7 @@ PHP-level Web Application Firewall for Silverstripe CMS. Blocks vulnerability sc
 - **Early PHP Filter** — Blocks requests before Silverstripe loads (minimal overhead)
 - **Early Filter Banning** — Self-contained fail2ban alternative, bans repeat offenders at the PHP level
 - **Pattern-based blocking** — WordPress probes, webshells, config file access, path traversal
+- **Upload-probe detection** (opt-in) - Blocks uploads named like PHP or server config (`x.php.jpg`, `.htaccess`) or starting with PHP code, and can count bursts of uploads from one IP as violations
 - **IP Blocklists** — Auto-sync from threat intelligence feeds (FireHOL, Binary Defense)
 - **Rate Limiting** — Hard limits (429), with optional non-blocking backoff headers before the limit
 - **Privileged IPs** — Elevated rate limits for trusted IPs (still subject to all security checks)
@@ -111,6 +112,7 @@ Restruct\SilverStripe\Waf\Middleware\WafMiddleware:
   ban_threshold: 10             # Violations before auto-ban
   ban_duration: 3600            # Ban duration in seconds (1 hour)
   early_ban_enabled: true       # Self-contained fail2ban alternative
+  upload_probe_enabled: false   # Opt-in: block PHP/webshell uploads in the early filter
 
   whitelisted_ips:
     - '127.0.0.1'
@@ -134,7 +136,7 @@ Works in all storage modes — no database required for `file` mode.
 | Topic | Description |
 |-------|-------------|
 | [Configuration](docs/configuration.md) | Storage modes, rate limiting, whitelists, privileged IPs, user-agents |
-| [Early Filter](docs/early-filter.md) | Blocked patterns, early banning, pattern philosophy |
+| [Early Filter](docs/early-filter.md) | Blocked patterns, upload checks, early banning, pattern philosophy |
 | [ModelAdmin Guard](docs/modeladmin-guard.md) | Protect ModelAdmin from scanner probes |
 | [Fail2ban](docs/fail2ban.md) | Fail2ban integration + Laravel Forge setup |
 | [Performance](docs/performance.md) | TTFB benchmarks, memory footprint, optimizations |

@@ -7,6 +7,7 @@ use Psr\SimpleCache\CacheInterface;
 use Restruct\SilverStripe\Waf\Models\PrivilegedIp;
 use Restruct\SilverStripe\Waf\Services\IpBlocklistService;
 use Restruct\SilverStripe\Waf\Services\WafStorageService;
+use SilverStripe\Admin\AdminRootController;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\Middleware\HTTPMiddleware;
@@ -105,6 +106,16 @@ class WafMiddleware implements HTTPMiddleware
 
     // Early filter banning (self-contained fail2ban alternative)
     private static bool $early_ban_enabled = true;
+
+    # Early filter upload checks (waf#15), opt-in. Enforced by the early filter only (multipart POSTs, before
+    # the framework loads): this class declares them and passes them on in config.json, like early_ban_enabled.
+    # upload_probe_enabled: block an upload whose filename has a PHP/server-config extension or whose
+    # first 4 KB hold PHP code. upload_burst_*: count every multipart POST past upload_burst_limit within
+    # upload_burst_window seconds from one IP as a violation.
+    private static bool $upload_probe_enabled = false;
+    private static bool $upload_burst_enabled = false;
+    private static int $upload_burst_limit = 5;
+    private static int $upload_burst_window = 10;
 
     // Error pages - use styled ErrorPage for rate limit responses (friendlier for legitimate users)
     private static bool $use_styled_error_pages = true;
@@ -705,7 +716,8 @@ class WafMiddleware implements HTTPMiddleware
      *
      * The early filter runs before the framework loads, so it can't read YAML config.
      * This bridges the gap: the middleware writes ban_threshold, ban_duration, and
-     * early_ban_enabled to a file that both layers can access.
+     * early_ban_enabled to a file that both layers can access. Since 1.10.0 also the upload-check
+     * options (upload_probe_enabled, upload_burst_*; waf#15), which only the early filter enforces.
      *
      * Writes at most once per hour to minimize overhead.
      *
@@ -805,6 +817,14 @@ class WafMiddleware implements HTTPMiddleware
             # SS_TRUSTED_PROXY_IPS itself when the variable lives there. Pass on the list exactly as
             # TrustedProxyMiddleware has it (env var or YAML), so both layers trust the same proxies.
             'trusted_proxy_ips' => (string) Injector::inst()->get(TrustedProxyMiddleware::class)->getTrustedProxyIPs(),
+            # Upload checks (waf#15): the filter enforces them, so they only take effect through this file
+            'upload_probe_enabled' => (bool) $this->config()->get('upload_probe_enabled'),
+            'upload_burst_enabled' => (bool) $this->config()->get('upload_burst_enabled'),
+            'upload_burst_limit' => (int) $this->config()->get('upload_burst_limit'),
+            'upload_burst_window' => (int) $this->config()->get('upload_burst_window'),
+            # The CMS admin route as the framework routes it (Director rules, else AdminRootController.url_base),
+            # which the upload burst count leaves out; the filter cannot work it out before the framework loads
+            'admin_path' => '/' . trim((string) AdminRootController::get_admin_route(), '/'),
         ];
 
         //@file_put_contents($configFile, json_encode($config));

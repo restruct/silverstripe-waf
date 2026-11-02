@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.10.0 (2026-11-02)
+
+### Added
+
+- **Upload-probe detection in the early filter** (waf#15, opt-in). Upload-handler probes fire multipart
+  POSTs at any endpoint that accepts files to drop a webshell; neither layer looked at uploads, and a
+  burst of ten stays far under the rate limit. With `upload_probe_enabled: true` the early filter answers
+  403 to a multipart POST carrying a file whose name has an executable extension anywhere after the first
+  dot (`.php`, `.phtml`, `.phar`, `.php3` to `.php8`, `.pht`, `.phps`, so also `x.php.jpg`;
+  case-insensitive), or is `.htaccess` or `.user.ini`, or whose first 4 KB contain `<?php`, `<?=`
+  followed by code, or `<script language="php">`. Plain and nested `$_FILES` fields are checked. A hit
+  goes through the existing block path, so it counts towards `ban_threshold` and the early ban, and is
+  logged as `reason=upload_probe` with IP, user agent and filename, never the file content. SVG passes
+  unless it holds PHP (SVG scripts are for svg-images). The matcher is `_waf_upload.php`, loaded only
+  for multipart POSTs.
+- **Optional upload-burst counter** (waf#15, opt-in). With `upload_burst_enabled: true`, each multipart
+  POST from one IP past `upload_burst_limit` (default 5) within `upload_burst_window` seconds (default
+  10) counts as a violation and is logged as `[WAF] VIOLATION reason=upload_burst`; the request itself
+  is not blocked. CMS admin URLs (the framework's `AdminRootController` route, passed on by the middleware,
+  `/admin` until it has) are left out of the count, since editors bulk-upload one POST per file; the probe
+  check still applies there. The counter is a per-IP `upl_<md5>` file in the early filter's data directory, which
+  housekeeping now treats as one of its own files.
+- Both options are YAML on `WafMiddleware`, passed to the early filter in `config.json` like
+  `early_ban_enabled` (so a change arrives within the hour), with `WAF_UPLOAD_PROBE` and
+  `WAF_UPLOAD_BURST` (`true`/`false`) as real-environment overrides. Non-multipart requests pay a few
+  array reads. Covered by `EarlyFilterUploadTest` on Silverstripe 5 and 6, including must-fail controls
+  (clean JPEG, PDF and SVG pass; non-multipart POSTs and the options off block nothing). See
+  docs/early-filter.md, "Upload Checks".
+
 ## 1.9.0 (2026-10-12)
 
 ### Changed

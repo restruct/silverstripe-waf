@@ -58,6 +58,13 @@ $wafDataDir = wafEarlyDataDir(__DIR__, false);
 
 // Read config from shared file (written by middleware from YAML config values)
 $earlyBanConfig = ['enabled' => true, 'threshold' => 10, 'duration' => 3600];
+# Upload checks (waf#15), both opt-in: off until the middleware has written them on in config.json, or
+# the env var below switches them on. Defaults match the YAML defaults on WafMiddleware.
+$earlyUploadConfig = ['probe' => false, 'burst' => false, 'burst_limit' => 5, 'burst_window' => 10];
+# The CMS admin route, left out of the upload burst count (mic, PR #16): an editor dropping many files on
+# an UploadField sends one POST per file. The middleware passes the real route on (AdminRootController);
+# until it has, the framework default.
+$earlyUploadConfig['admin_path'] = '/admin';
 //$wafConfigFile = $wafDataDir !== null ? $wafDataDir . '/config.json' : null;
 //if ($wafConfigFile !== null && file_exists($wafConfigFile)) {
 //    $loadedConfig = json_decode(@file_get_contents($wafConfigFile), true);
@@ -71,6 +78,11 @@ if ($wafConfigJson !== null) {
         $earlyBanConfig['duration'] = (int) ($loadedConfig['ban_duration'] ?? 3600);
         // Trusted proxies as the framework resolved them (SS_TRUSTED_PROXY_IPS, usually from .env)
         $wafConfigTrustedProxies = (string) ($loadedConfig['trusted_proxy_ips'] ?? '');
+        $earlyUploadConfig['probe'] = (bool) ($loadedConfig['upload_probe_enabled'] ?? false);
+        $earlyUploadConfig['burst'] = (bool) ($loadedConfig['upload_burst_enabled'] ?? false);
+        $earlyUploadConfig['burst_limit'] = (int) ($loadedConfig['upload_burst_limit'] ?? 5);
+        $earlyUploadConfig['burst_window'] = (int) ($loadedConfig['upload_burst_window'] ?? 10);
+        $earlyUploadConfig['admin_path'] = (string) ($loadedConfig['admin_path'] ?? '/admin');
     }
 }
 
@@ -79,6 +91,16 @@ if (getenv('WAF_EARLY_BAN') === 'false') {
     $earlyBanConfig['enabled'] = false;
 } elseif (getenv('WAF_EARLY_BAN') === 'true') {
     $earlyBanConfig['enabled'] = true;
+}
+
+# The same kind of override for the upload checks (waf#15). A real env var takes effect at once, where a
+# YAML change only reaches the filter when the middleware next rewrites config.json (at most hourly).
+foreach (['WAF_UPLOAD_PROBE' => 'probe', 'WAF_UPLOAD_BURST' => 'burst'] as $wafEnvName => $wafUploadKey) {
+    if (getenv($wafEnvName) === 'false') {
+        $earlyUploadConfig[$wafUploadKey] = false;
+    } elseif (getenv($wafEnvName) === 'true') {
+        $earlyUploadConfig[$wafUploadKey] = true;
+    }
 }
 
 
@@ -158,6 +180,31 @@ if ($config['detect_php_probes']) {
     if (preg_match('/^\/[a-z0-9_]{2,8}\.php$/i', $uriPath)) {
         if (!in_array($uriPath, $legitimatePhpFiles, true)) {
             wafLogAndBlock('php_probe', $uriPath, $ip, $uri, $userAgent);
+        }
+    }
+}
+
+# 3. Upload-handler probes (waf#15): webshell drop attempts through any endpoint that takes files.
+#    Opt-in, and only multipart/form-data POSTs get past this condition, so with the checks off, and for
+#    every other request with them on, the cost is a few array reads. Behind a proxy that passes the
+#    content type as HTTP_CONTENT_TYPE only, that one is read too.
+if (($earlyUploadConfig['probe'] || $earlyUploadConfig['burst'])
+    && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+    && stripos(ltrim((string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '')), 'multipart/form-data') === 0
+) {
+    # Upload burst first, so a probe that is blocked below still counts towards the burst. CMS admin URLs
+    # are not counted (bulk uploads by editors); the probe check below still applies to them.
+    if ($earlyUploadConfig['burst'] && $earlyUploadConfig['burst_limit'] > 0 && $earlyUploadConfig['burst_window'] > 0
+        && !wafIsAdminPath($uriPath, $earlyUploadConfig['admin_path'])
+    ) {
+        wafTrackUploadBurst($ip, $uri, $userAgent);
+    }
+    if ($earlyUploadConfig['probe'] && !empty($_FILES)) {
+        require_once __DIR__ . '/_waf_upload.php';
+        $uploadHit = wafMatchUploadProbe($_FILES);
+        if ($uploadHit !== null) {
+            # Logs IP, user agent and the filename (in the pattern field), never the file content
+            wafLogAndBlock('upload_probe', wafUploadProbeLogPattern($uploadHit), $ip, $uri, $userAgent);
         }
     }
 }
@@ -390,9 +437,88 @@ function wafTrackViolation(string $ip): void
 }
 
 /**
+ * Whether $path is the CMS admin route $adminPath or below it (/admin, /admin/assets/...), but not a longer
+ * word (/administrator). Case-insensitive. An empty or root admin path matches nothing, so a broken value
+ * never exempts the whole site from the upload burst count.
+ */
+function wafIsAdminPath(string $path, string $adminPath): bool
+{
+    $adminPath = strtolower('/' . trim($adminPath, '/'));
+    if ($adminPath === '/') {
+        return false;
+    }
+    $path = strtolower($path);
+    return $path === $adminPath || str_starts_with($path, $adminPath . '/');
+}
+
+/**
+ * Count a multipart POST from $ip, and record a violation for each one past upload_burst_limit within
+ * upload_burst_window seconds (waf#15: a probe tool fires ten uploads in a second at whatever endpoint
+ * takes files, far under the rate limit).
+ *
+ * The request is not blocked: a burst is a signal, not proof (a person dropping a handful of files on an
+ * upload field sends one POST each), so it only counts towards ban_threshold, like a path probe does,
+ * and is logged for fail2ban. Same per-IP file storage as wafTrackViolation(): upl_<md5>, holding
+ * "count:window_start", a fixed window that starts over once it has passed.
+ */
+function wafTrackUploadBurst(string $ip, string $uri, string $userAgent): void
+{
+    global $earlyBanConfig, $earlyUploadConfig, $wafDataDir;
+
+    # As in wafTrackViolation(): make the private dir on first use, or do without when there is none
+    if ($wafDataDir === null) {
+        $wafDataDir = wafEarlyDataDir(__DIR__, true);
+        if ($wafDataDir === null) {
+            return;
+        }
+    }
+
+    $burstFile = 'upl_' . md5($ip);
+    $now = time();
+    $count = 0;
+    $windowStart = $now;
+    # Only a regular file of ours is continued, anything else starts over (the write below replaces it)
+    $data = wafReadDataFile($wafDataDir, $burstFile);
+    if ($data !== null) {
+        $parts = explode(':', $data, 2);
+        $count = (int) ($parts[0] ?? 0);
+        $windowStart = (int) ($parts[1] ?? $now);
+        # Window over (or a start in the future, which would keep it open for ever): start a new one
+        if ($windowStart <= $now - $earlyUploadConfig['burst_window'] || $windowStart > $now) {
+            $count = 0;
+            $windowStart = $now;
+        }
+    }
+
+    $count++;
+    wafWriteDataFile($wafDataDir, $burstFile, $count . ':' . $windowStart);
+
+    if ($count > $earlyUploadConfig['burst_limit']) {
+        # fail2ban-compatible, like the middleware's VIOLATION lines; the URI and user agent sanitized as
+        # in wafLogAndBlock()
+        error_log(sprintf(
+            '[WAF] VIOLATION reason=upload_burst ip=%s count=%d window=%d uri="%s" ua="%s"',
+            $ip,
+            $count,
+            $earlyUploadConfig['burst_window'],
+            preg_replace('/[^\x20-\x7E]/', '', substr($uri, 0, 200)),
+            preg_replace('/[^\x20-\x7E]/', '', substr($userAgent, 0, 200))
+        ));
+        wafTrackViolation($ip);
+    }
+
+    # Every uploading address leaves a counter; tidy up now and then, as wafTrackViolation() does, so
+    # a site with only clean uploads does not collect them for ever. The same max age as there
+    # (ban_duration): the cleanup also removes ban files, and a shorter age would lift live bans.
+    if (mt_rand(1, 100) === 1) {
+        wafCleanupExpired($wafDataDir, max($earlyBanConfig['duration'], $earlyUploadConfig['burst_window']));
+    }
+}
+
+/**
  * Clean up expired ban and violation files
  *
- * Only the filter's own names (ban_<md5>, viol_<md5>, and .tmp-<hex> files of an interrupted write) are
+ * Only the filter's own names (ban_<md5>, viol_<md5>, upl_<md5>, and .tmp-<hex> files of an interrupted write) are
  * ever deleted (waf#9 review): everything else, config.json included, is left alone, whatever its age.
  */
 function wafCleanupExpired(string $dir, int $maxAge): void
