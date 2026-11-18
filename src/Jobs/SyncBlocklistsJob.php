@@ -44,7 +44,12 @@ class SyncBlocklistsJob extends AbstractQueuedJob implements QueuedJob
         return 'WAF: Sync IP Blocklists';
     }
 
-    public function getJobType(): int
+    /**
+     * A string, as queuedjobs defines the constant (QueuedJob::QUEUED is '2'): declared `: int`, PHP
+     * coerced it to 2 and Silverstripe 6 refuses an int JobType on write, so every reschedule
+     * failed (waf#19).
+     */
+    public function getJobType(): string
     {
         return QueuedJob::QUEUED;
     }

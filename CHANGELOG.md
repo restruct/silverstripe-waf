@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **SS6: the blocklist sync job broke on its first reschedule** (#19). `SyncBlocklistsJob::getJobType()`
+  was declared `: int`, which turned queuedjobs' `QueuedJob::QUEUED` ('2') into 2; Silverstripe 6 refuses an
+  int `JobType` on write, so the job ended Broken after one run and every later queue run tried to
+  recreate it and sent a "default job not found" email. It now returns a string, as the constant is
+  (safe on Silverstripe 5 too).
+
 ## 1.10.0 (2026-11-02)
 
 ### Added
