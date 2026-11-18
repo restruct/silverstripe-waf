@@ -19,11 +19,13 @@ class SyncBlocklistsJobTest extends SapphireTest
 
     protected function setUp(): void
     {
+        # parent::setUp() first: skipping before it leaves the kernel state unset and
+        # tearDownAfterClass() then errors.
+        parent::setUp();
         # queuedjobs is optional (composer "suggest"); without it the job class is not declared.
         if (!class_exists(AbstractQueuedJob::class)) {
             $this->markTestSkipped('symbiote/silverstripe-queuedjobs is not installed');
         }
-        parent::setUp();
     }
 
     public function testJobTypeIsTheQueueConstantUnchanged(): void
